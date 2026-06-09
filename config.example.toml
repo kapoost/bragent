@@ -1,0 +1,24 @@
+# bragent example configuration. Copy to config.toml and customise.
+
+[brand]
+name = "Acme Outdoor"
+domain = "shop.acme-outdoor.example"
+logo_url = "https://shop.acme-outdoor.example/logo.png"
+
+[server]
+listen = ":8080"
+
+[feed]
+# Use file:// for local testing, http(s):// for production catalogues.
+url = "file://./feeds/example.json"
+format = "json"
+cache_path = ".cache/feed.json"
+refresh_interval = "30m"
+
+# OpenAI-compatible LLM endpoint used by si_send_message (not wired in M1).
+# Works with Ollama (http://localhost:11434/v1), llama.cpp server, vLLM,
+# OpenAI proper. Leave api_key empty for unauthenticated local models.
+[llm]
+endpoint = "http://localhost:11434/v1"
+api_key = ""
+model = "llama3.3"

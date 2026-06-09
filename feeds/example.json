@@ -1,0 +1,42 @@
+[
+  {
+    "id": "tent-2p",
+    "name": "Acme Backpacker 2P Tent",
+    "description": "Two-person ultralight tent, 1.4kg, freestanding.",
+    "price": 349.00,
+    "currency": "USD",
+    "url": "https://shop.acme-outdoor.example/p/tent-2p",
+    "available": true,
+    "tags": ["camping", "tent", "ultralight"]
+  },
+  {
+    "id": "pad-r5",
+    "name": "Acme R5 Sleeping Pad",
+    "description": "Inflatable pad, R-value 5, 4-season comfort.",
+    "price": 159.00,
+    "currency": "USD",
+    "url": "https://shop.acme-outdoor.example/p/pad-r5",
+    "available": true,
+    "tags": ["camping", "sleeping", "pad"]
+  },
+  {
+    "id": "stove-canister",
+    "name": "Acme Canister Stove",
+    "description": "Compact canister stove, 65g, simmer control.",
+    "price": 79.00,
+    "currency": "USD",
+    "url": "https://shop.acme-outdoor.example/p/stove-canister",
+    "available": false,
+    "tags": ["cooking", "stove", "backpacking"]
+  },
+  {
+    "id": "headlamp-300",
+    "name": "Acme 300lm Headlamp",
+    "description": "Rechargeable headlamp, 300 lumens, IPX5.",
+    "price": 49.00,
+    "currency": "USD",
+    "url": "https://shop.acme-outdoor.example/p/headlamp-300",
+    "available": true,
+    "tags": ["lighting", "headlamp", "hiking"]
+  }
+]

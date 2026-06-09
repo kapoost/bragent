@@ -1,0 +1,5 @@
+# Compiled binary at repo root — anchored so cmd/bragent/ source stays tracked.
+/bragent
+*.exe
+.cache/
+config.toml
