@@ -13,6 +13,14 @@ type Config struct {
 	Server Server `toml:"server"`
 	Feed   Feed   `toml:"feed"`
 	LLM    LLM    `toml:"llm"`
+	Store  Store  `toml:"store"`
+}
+
+// Store points at the SQLite session-state database. Empty path or
+// ":memory:" runs ephemerally — useful for tests and --simulate-host
+// smoke loops. File paths persist sessions across restarts.
+type Store struct {
+	Path string `toml:"path"`
 }
 
 type Brand struct {
@@ -73,6 +81,9 @@ func (c *Config) applyDefaultsAndValidate() error {
 	}
 	if c.Feed.RefreshInterval == "" {
 		c.Feed.RefreshInterval = "30m"
+	}
+	if c.Store.Path == "" {
+		c.Store.Path = ".cache/bragent.db"
 	}
 	return nil
 }

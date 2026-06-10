@@ -49,3 +49,52 @@ type CapabilitiesResponse struct {
 	AgentName          string   `json:"agent_name"`
 	AgentURL           string   `json:"agent_url"`
 }
+
+// InitiateSessionRequest — input to si_initiate_session. Matches the partial
+// example schema in docs.adcontextprotocol.org/docs/sponsored-intelligence
+// (2026-06-09): the host forwards the user's intent + per-user identity
+// (subject to consent) + a media_buy_id or offering_id tying the session
+// back to the seller's attribution flow.
+type InitiateSessionRequest struct {
+	Intent                string                 `json:"intent,omitempty"`
+	Identity              *Identity              `json:"identity,omitempty"`
+	MediaBuyID            string                 `json:"media_buy_id,omitempty"`
+	Placement             string                 `json:"placement,omitempty"`
+	OfferingID            string                 `json:"offering_id,omitempty"`
+	OfferingToken         string                 `json:"offering_token,omitempty"`
+	SupportedCapabilities map[string]interface{} `json:"supported_capabilities,omitempty"`
+	Locale                string                 `json:"locale,omitempty"`
+}
+
+// Identity — host-side user identity attached to the session. consent_granted
+// is the explicit user-consent flag; all other fields are pseudonymous handles
+// the host may share once the user opted in.
+type Identity struct {
+	ConsentGranted bool   `json:"consent_granted"`
+	UserPseudoID   string `json:"user_pseudo_id,omitempty"`
+	UserSegment    string `json:"user_segment,omitempty"`
+	UserLanguage   string `json:"user_language,omitempty"`
+}
+
+// InitiateSessionResponse — first turn of the brand-agent conversation.
+// session_id is the correlation key for every subsequent si_send_message,
+// si_terminate_session, and (if the conversation reaches checkout) the
+// handoff URL the host hands back to the user.
+type InitiateSessionResponse struct {
+	SessionID     string                 `json:"session_id"`
+	SessionStatus string                 `json:"session_status"`
+	Response      SessionTurnResponse    `json:"response"`
+	BrandName     string                 `json:"brand_name"`
+	BrandDomain   string                 `json:"brand_domain"`
+	Capabilities  map[string]interface{} `json:"capabilities,omitempty"`
+}
+
+// SessionTurnResponse — the brand agent's user-facing payload for a single
+// conversation turn. message is the natural-language reply the host renders
+// inline; ui_elements is the optional structured component bundle (see SI
+// "UI components" experimental surface) that hosts able to render rich UI
+// can present alongside the text.
+type SessionTurnResponse struct {
+	Message    string                   `json:"message"`
+	UIElements []map[string]interface{} `json:"ui_elements,omitempty"`
+}
