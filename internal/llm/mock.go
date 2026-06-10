@@ -1,15 +1,15 @@
 // Package llm is the brand-agent reply generator.
 //
-// M3 ships a deterministic mock responder so the full SI lifecycle is
-// testable offline — no OpenAI key, no Ollama, no flakey egress. A real
-// provider (OpenAI-compatible HTTP, llama.cpp, vLLM, …) will slot in
-// behind the same Provider interface in a later milestone, gated on the
-// [llm] section of the TOML config.
+// M3 shipped a deterministic mock responder so the full SI lifecycle is
+// testable offline — no OpenAI key, no Ollama, no flakey egress. M4 adds
+// the OpenAI-compatible HTTP provider behind the same interface. Provider
+// selection is config-gated in cmd/bragent/main.go: empty [llm] endpoint
+// keeps the mock; a non-empty endpoint switches to OpenAI.
 //
-// The mock's reply policy is intentionally crude: it scans the user turn
-// for product-name keywords and for buy-intent verbs, and it nudges the
-// session toward `pending_handoff` once intent is clear. That's enough to
-// drive the spec's three SessionStatus values through the test harness.
+// The buy-intent vocabulary (see intent.go) is shared across providers
+// because the LLM itself doesn't advertise session_status — we infer
+// pending_handoff from the host's most recent turn regardless of who
+// generated the assistant reply.
 package llm
 
 import (
@@ -26,12 +26,12 @@ type Provider interface {
 }
 
 type ReplyRequest struct {
-	BrandName  string
+	BrandName   string
 	BrandDomain string
-	OfferingID string
-	UserText   string
-	History    []Turn
-	Catalog    []feed.Product
+	OfferingID  string
+	UserText    string
+	History     []Turn
+	Catalog     []feed.Product
 }
 
 type Turn struct {
@@ -52,33 +52,19 @@ type Mock struct{}
 
 func NewMock() *Mock { return &Mock{} }
 
-var buyIntent = []string{
-	"buy", "purchase", "order", "checkout", "add to cart", "where can i get",
-	"how do i get one", "ready to buy", "let's do it", "go ahead",
-}
-
 func (m *Mock) Reply(req ReplyRequest) ReplyResponse {
-	low := strings.ToLower(req.UserText)
-
-	// Pending handoff: the user has signalled buy intent. Hand them a
-	// brand checkout URL keyed on offering when we have one.
-	for _, kw := range buyIntent {
-		if strings.Contains(low, kw) {
-			handoff := "https://" + req.BrandDomain + "/checkout"
-			if req.OfferingID != "" {
-				handoff += "?offering=" + req.OfferingID
-			}
-			return ReplyResponse{
-				Message: "Great — I'll hand you off to " + req.BrandName + "'s checkout. Your conversation context is preserved so they pick up where we left off.",
-				SessionStatus: "pending_handoff",
-				HandoffURL:    handoff,
-			}
+	if ok, handoff, msg := detectHandoff(req.UserText, req.BrandName, req.BrandDomain, req.OfferingID); ok {
+		return ReplyResponse{
+			Message:       msg,
+			SessionStatus: "pending_handoff",
+			HandoffURL:    handoff,
 		}
 	}
 
 	// Otherwise, see if the user mentioned a specific product. Pick the
 	// best match (longest product name substring hit) and surface details
 	// from the catalog row.
+	low := strings.ToLower(req.UserText)
 	best := pickProduct(low, req.Catalog)
 	if best != nil {
 		msg := best.Name + ": " + best.Description
@@ -93,7 +79,7 @@ func (m *Mock) Reply(req ReplyRequest) ReplyResponse {
 
 	// Fallback acknowledgement so the host always has something to render.
 	return ReplyResponse{
-		Message: "Got it. I can pull up specs, compare options, or take you to checkout — what would help most?",
+		Message:       "Got it. I can pull up specs, compare options, or take you to checkout — what would help most?",
 		SessionStatus: "active",
 	}
 }

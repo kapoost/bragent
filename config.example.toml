@@ -15,10 +15,20 @@ format = "json"
 cache_path = ".cache/feed.json"
 refresh_interval = "30m"
 
-# OpenAI-compatible LLM endpoint used by si_send_message (not wired in M1).
-# Works with Ollama (http://localhost:11434/v1), llama.cpp server, vLLM,
-# OpenAI proper. Leave api_key empty for unauthenticated local models.
+# OpenAI-compatible LLM endpoint used by si_send_message.
+# Leave [llm].endpoint empty (or omit the section) to use the offline mock
+# responder — that's what --simulate-host and CI rely on.
+#
+# Uncomment to point at a real OpenAI-compatible server. Tested wire shape:
+# Ollama (http://localhost:11434/v1), llama.cpp server, vLLM, OpenAI proper.
+# Leave api_key empty for unauthenticated local models.
 [llm]
-endpoint = "http://localhost:11434/v1"
+endpoint = ""
 api_key = ""
-model = "llama3.3"
+model = ""
+
+# Example: local Ollama
+# [llm]
+# endpoint = "http://localhost:11434/v1"
+# api_key = ""
+# model = "llama3.2"

@@ -15,6 +15,7 @@ Local: `/Users/kapoost/adcp/bragent/`.
 | M2 | ✅ | `f485f95` | `si_initiate_session`, SQLite session store, `--simulate-host` CLI smoke loop |
 | M3 | ✅ | `7ad1cbd` | `si_send_message`, `si_terminate_session`, mock LLM, `/.well-known/{brand,adagents}.json` |
 | CI | ✅ | `d47280c` | GitHub Actions: `go vet`, build, `--simulate-host` assertions |
+| M4 | ✅ | _pending_ | OpenAI-compatible HTTP provider (Ollama/llama.cpp/vLLM/OpenAI), config-gated via `[llm].endpoint`, Mock stays default |
 
 Pełen SI lifecycle smoke-tested: `initiate → message → buy-intent → pending_handoff → terminate` z SQLite audit trail.
 
@@ -77,8 +78,7 @@ gh run list --repo kapoost/bragent --limit 5
 ## Roadmap
 
 Open for next session:
-- **M4:** Real LLM provider behind `llm.Provider` (OpenAI-compatible HTTP — works with Ollama, llama.cpp, vLLM). Config-gated; mock stays the default for offline/CI.
-- **Release tag `v0.1.0`** + GitHub Release notes covering the M1–M3 lifecycle.
+- **Release tag `v0.1.0`** + GitHub Release notes covering the M1–M4 lifecycle.
 - **README polish:** narrative ("inbound vs outbound brand discovery"), quickstart with `./bragent --simulate-host` first-30-seconds, deployment recipes (Caddy + Fly + bare VPS).
 - **Optional: Docker image** + multi-arch (amd64/arm64) — Apache 2.0 + private repo means we control distribution.
 

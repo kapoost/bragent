@@ -58,13 +58,26 @@ func main() {
 
 	go catalog.RefreshLoop(ctx)
 
-	provider := llm.NewMock()
+	// Provider selection is config-gated: empty [llm] endpoint keeps the
+	// deterministic Mock (offline-safe, used by CI smoke), a non-empty
+	// endpoint switches to the OpenAI-compatible HTTP provider. The wire
+	// shape is the same /v1/chat/completions used by Ollama, llama.cpp,
+	// vLLM, and OpenAI itself.
+	var provider llm.Provider
+	providerName := "mock"
+	if cfg.LLM.Endpoint != "" {
+		provider = llm.NewOpenAI(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model)
+		providerName = "openai:" + cfg.LLM.Endpoint
+	} else {
+		provider = llm.NewMock()
+	}
+
 	handlers := si.NewHandlers(cfg, catalog, st, provider)
 	wk := wellknown.New(cfg)
 	server := mcp.NewServer(cfg.Server, handlers, wk)
 
-	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s",
-		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path)
+	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s llm=%s",
+		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Run(ctx) }()
