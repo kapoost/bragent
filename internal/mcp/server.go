@@ -22,17 +22,22 @@ type Handler interface {
 type Server struct {
 	cfg     config.Server
 	handler Handler
+	extra   http.Handler // optional /.well-known/* handler delegated to wellknown.Handler
 	http    *http.Server
 }
 
-func NewServer(cfg config.Server, h Handler) *Server {
-	return &Server{cfg: cfg, handler: h}
+func NewServer(cfg config.Server, h Handler, extra http.Handler) *Server {
+	return &Server{cfg: cfg, handler: h, extra: extra}
 }
 
 func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", s.handleMCP)
 	mux.HandleFunc("/.well-known/healthz", s.handleHealthz)
+	if s.extra != nil {
+		mux.Handle("/.well-known/brand.json", s.extra)
+		mux.Handle("/.well-known/adagents.json", s.extra)
+	}
 
 	s.http = &http.Server{
 		Addr:              s.cfg.Listen,

@@ -25,9 +25,11 @@ import (
 
 	"github.com/kapoost/bragent/internal/config"
 	"github.com/kapoost/bragent/internal/feed"
+	"github.com/kapoost/bragent/internal/llm"
 	"github.com/kapoost/bragent/internal/mcp"
 	"github.com/kapoost/bragent/internal/si"
 	"github.com/kapoost/bragent/internal/store"
+	"github.com/kapoost/bragent/internal/wellknown"
 )
 
 func main() {
@@ -56,8 +58,10 @@ func main() {
 
 	go catalog.RefreshLoop(ctx)
 
-	handlers := si.NewHandlers(cfg, catalog, st)
-	server := mcp.NewServer(cfg.Server, handlers)
+	provider := llm.NewMock()
+	handlers := si.NewHandlers(cfg, catalog, st, provider)
+	wk := wellknown.New(cfg)
+	server := mcp.NewServer(cfg.Server, handlers, wk)
 
 	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s",
 		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path)

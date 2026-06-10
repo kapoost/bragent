@@ -9,6 +9,7 @@ import (
 
 	"github.com/kapoost/bragent/internal/config"
 	"github.com/kapoost/bragent/internal/feed"
+	"github.com/kapoost/bragent/internal/llm"
 	"github.com/kapoost/bragent/internal/mcp"
 	"github.com/kapoost/bragent/internal/store"
 )
@@ -17,10 +18,11 @@ type Handlers struct {
 	cfg     *config.Config
 	catalog *feed.Catalog
 	store   *store.Store
+	llm     llm.Provider
 }
 
-func NewHandlers(cfg *config.Config, catalog *feed.Catalog, st *store.Store) *Handlers {
-	return &Handlers{cfg: cfg, catalog: catalog, store: st}
+func NewHandlers(cfg *config.Config, catalog *feed.Catalog, st *store.Store, provider llm.Provider) *Handlers {
+	return &Handlers{cfg: cfg, catalog: catalog, store: st, llm: provider}
 }
 
 func (h *Handlers) Handle(ctx context.Context, method string, params json.RawMessage) (any, *mcp.Error) {
@@ -31,11 +33,10 @@ func (h *Handlers) Handle(ctx context.Context, method string, params json.RawMes
 		return h.getOffering(ctx, params)
 	case "si_initiate_session":
 		return h.initiateSession(ctx, params)
-	case "si_send_message", "si_terminate_session":
-		return nil, &mcp.Error{
-			Code:    mcp.ErrMethodNotFound,
-			Message: fmt.Sprintf("method %s recognised but not implemented in M2 (spec TBD as of 2026-06-10)", method),
-		}
+	case "si_send_message":
+		return h.sendMessage(ctx, params)
+	case "si_terminate_session":
+		return h.terminateSession(ctx, params)
 	default:
 		return nil, &mcp.Error{Code: mcp.ErrMethodNotFound, Message: "unknown method: " + method}
 	}
@@ -51,6 +52,8 @@ func (h *Handlers) capabilities() CapabilitiesResponse {
 			"get_adcp_capabilities",
 			"si_get_offering",
 			"si_initiate_session",
+			"si_send_message",
+			"si_terminate_session",
 		},
 		AgentName: h.cfg.Brand.Name,
 		AgentURL:  fmt.Sprintf("https://%s/mcp", h.cfg.Brand.Domain),

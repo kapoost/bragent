@@ -181,6 +181,62 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 	return &sess, nil
 }
 
+func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE sessions SET session_status = ?, updated_at = ? WHERE session_id = ?`,
+		status, now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update session %s: %w", id, err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("session %s not found", id)
+	}
+	return nil
+}
+
+// ListMessages returns the full turn log for a session, oldest first.
+// Used by si_send_message to feed prior turns into the mock LLM so its
+// replies stay context-aware across the conversation.
+func (s *Store) ListMessages(ctx context.Context, sessionID string) ([]Message, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT session_id, turn, role, content, payload, created_at
+		   FROM messages WHERE session_id = ? ORDER BY turn ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list messages %s: %w", sessionID, err)
+	}
+	defer rows.Close()
+	var out []Message
+	for rows.Next() {
+		var m Message
+		var createdAt string
+		if err := rows.Scan(&m.SessionID, &m.Turn, &m.Role, &m.Content, &m.Payload, &createdAt); err != nil {
+			return nil, err
+		}
+		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// NextTurn returns the next turn number for a session. Callers use this
+// to stamp messages atomically with the session row update.
+func (s *Store) NextTurn(ctx context.Context, sessionID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(turn), -1) + 1 FROM messages WHERE session_id = ?`,
+		sessionID,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("next turn %s: %w", sessionID, err)
+	}
+	return n, nil
+}
+
 // MarshalIdentity is a tiny helper so callers don't import encoding/json
 // to stash an Identity blob in the session row.
 func MarshalIdentity(v any) (string, error) {

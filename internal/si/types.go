@@ -98,3 +98,45 @@ type SessionTurnResponse struct {
 	Message    string                   `json:"message"`
 	UIElements []map[string]interface{} `json:"ui_elements,omitempty"`
 }
+
+// SendMessageRequest — input to si_send_message. The host forwards the
+// user's latest utterance; the brand agent answers with the next turn
+// and the session_status the host should propagate (active / pending_handoff
+// / terminated). The host pins by session_id from si_initiate_session.
+type SendMessageRequest struct {
+	SessionID string `json:"session_id"`
+	Message   string `json:"message"`
+}
+
+// SendMessageResponse mirrors the InitiateSessionResponse shape so the
+// host can render either turn type identically. When SessionStatus is
+// "pending_handoff" the Handoff block carries a checkout URL keyed on
+// the brand domain; the host renders it as a CTA.
+type SendMessageResponse struct {
+	SessionID     string              `json:"session_id"`
+	SessionStatus string              `json:"session_status"`
+	Response      SessionTurnResponse `json:"response"`
+	Handoff       *HandoffInfo        `json:"handoff,omitempty"`
+}
+
+// HandoffInfo — the commerce destination the host hands the user back to
+// when SessionStatus transitions to pending_handoff. session_id flows
+// through so the brand's checkout can stitch the conversation context.
+type HandoffInfo struct {
+	URL       string `json:"url"`
+	SessionID string `json:"session_id"`
+}
+
+// TerminateSessionRequest — graceful end-of-session signal from the host.
+// reason mirrors the spec enum (handoff_transaction, handoff_complete,
+// user_exit, session_timeout, host_terminated).
+type TerminateSessionRequest struct {
+	SessionID string `json:"session_id"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type TerminateSessionResponse struct {
+	SessionID     string `json:"session_id"`
+	SessionStatus string `json:"session_status"`
+	Reason        string `json:"reason,omitempty"`
+}

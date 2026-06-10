@@ -70,6 +70,23 @@ func (c *Catalog) Size() int {
 	return len(c.products)
 }
 
+// All returns a snapshot of every product in lexicographic ID order.
+// Callers receive a fresh slice; safe to mutate without locking.
+func (c *Catalog) All() []Product {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	ids := make([]string, 0, len(c.products))
+	for id := range c.products {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]Product, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, c.products[id])
+	}
+	return out
+}
+
 func (c *Catalog) RefreshLoop(ctx context.Context) {
 	t := time.NewTicker(c.interval)
 	defer t.Stop()
