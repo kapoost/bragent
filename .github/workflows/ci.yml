@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build + vet + smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Module integrity
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build -v -o bragent ./cmd/bragent
+
+      - name: Simulate-host smoke
+        # Exercises the full M2/M3 lifecycle: boot → loopback si_initiate_session
+        # → log response → graceful shutdown. Catches any wire-level regression
+        # that the SQLite store or MCP dispatcher would otherwise hide until a
+        # real host integrates.
+        run: |
+          ./bragent --config config.example.toml --simulate-host 2>&1 | tee /tmp/smoke.log
+          grep -q '"session_id":"sess_' /tmp/smoke.log
+          grep -q '"session_status":"active"' /tmp/smoke.log
