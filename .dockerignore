@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+.cache
+.vscode
+.idea
+*.md
+bragent
+/bin
+/dist
+/tmp

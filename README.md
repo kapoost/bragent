@@ -40,6 +40,15 @@ bragent --config config.toml
 # bragent listening listen=:8080 brand="Acme Outdoor" domain=... products=4 llm=mock
 ```
 
+Or via Docker (multi-arch, amd64 + arm64, scratch base, ~7 MB):
+
+```sh
+docker run --rm -p 8080:8080 \
+    -v $PWD/config.toml:/etc/bragent/config.toml:ro \
+    -v bragent-data:/var/lib/bragent \
+    ghcr.io/kapoost/bragent:v0.1.0
+```
+
 Then point a buyer agent at `http://your-host/mcp` for MCP/JSON-RPC and `http://your-host/.well-known/{brand,adagents}.json` for discovery.
 
 ## Configuration

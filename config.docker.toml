@@ -1,0 +1,27 @@
+# bragent — container default configuration.
+#
+# Paths resolve against the image-baked /etc/bragent layout and the
+# /var/lib/bragent volume. Override by mounting a real config at
+# /etc/bragent/config.toml or via `--config /path/to/your.toml`.
+
+[brand]
+name = "Acme Outdoor"
+domain = "shop.acme-outdoor.example"
+logo_url = "https://shop.acme-outdoor.example/logo.png"
+
+[server]
+listen = ":8080"
+
+[feed]
+url = "file:///etc/bragent/feeds/example.json"
+format = "json"
+cache_path = "/var/lib/bragent/feed.json"
+refresh_interval = "30m"
+
+[store]
+path = "/var/lib/bragent/bragent.db"
+
+[llm]
+endpoint = ""
+api_key = ""
+model = ""
