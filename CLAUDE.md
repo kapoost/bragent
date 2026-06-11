@@ -82,9 +82,20 @@ Open for next session:
 - **README polish:** narrative ("inbound vs outbound brand discovery"), quickstart with `./bragent --simulate-host` first-30-seconds, deployment recipes (Caddy + Fly + bare VPS).
 - **Optional: Docker image** + multi-arch (amd64/arm64) — Apache 2.0 + private repo means we control distribution.
 
-Parked (spec dependency):
-- A2A Agent Card surface at `/.well-known/agent.json` — wait until the A2A working group settles the SI/agent-card overlap.
-- Brand-side `validate_adagents`-style self-check tool — wait until AAO ships the brand-agent storyboard suite.
+M5 — additive spec sync from 3.1.0-rc.* (none gated on SI graduation; all backward-compatible):
+- **`availability_status` enum on `si_get_offering` response** — `available | limited | sold_out | expired | region_restricted | inactive`, both on the `offering` object and each `matching_products[]` item. Source: AdCP `52bd79c` (rc.12). Wire it into `internal/si/types.go` + `internal/si/handlers.go:getOffering`; derive from `feed.Product.Available` (true → `available`, false → `sold_out` as default) with feed-level override later.
+- **`context` + `ext` fields on every SI request/response** — additive open-scope. Source: AdCP `b674082`. Add `Context json.RawMessage` + `Ext json.RawMessage` (both `omitempty`) to all SI types in `internal/si/types.go`; handlers ignore for now, just pass through.
+- **`context_outputs.offering.offering_id` path** — verify our wire shape against #3981. Likely a no-op for us since we already key handoff URLs on `offering_id`, but confirm against the rc.12 schema bundle.
+- **`AdCPSpecialism` enum value** — spec uses `sponsored-intelligence` (hyphenated) as the specialism ID, marked `preview`. Our capabilities() returns `sponsored_intelligence.core` (underscored). Cross-check both forms; may need to emit both for compat.
+
+M6+ — brand-agent surface beyond SI (still upstream, may overlap with our scope):
+- **`verify_brand_claim` / `verify_brand_claims`** — new brand-agent tools landed in 3.1.0-rc.*. Four claim types (`subsidiary`, `parent`, `property`, `trademark`), signed responses, asymmetric trust model. Worth a separate milestone after `v0.1.0` — adds a real brand-identity surface that pairs naturally with SI.
+
+Parked (spec dependency / external WG):
+- **A2A Agent Card** at `/.well-known/agent.json` — wait until the A2A working group settles SI/agent-card overlap.
+- **A2UI / MCP Apps support in SI** — agent-driven UI rendering (AdCP `8b8b63c`). Large surface, wait until spec stabilises.
+- **Brand-side `validate_adagents`-style self-check** — wait until AAO ships the brand-agent storyboard suite.
+- **SI graduation watch** — SI tools stay `x-status: experimental` through all of 3.1.x with no committed date. Graduation gate (`required_tools` + graded storyboard) is defined but unscheduled. Keep hand-rolled types until upstream signals.
 
 ## Related project links
 

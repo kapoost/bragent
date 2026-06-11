@@ -40,7 +40,11 @@ func NewOpenAI(endpoint, apiKey, model string) *OpenAI {
 		endpoint: endpoint,
 		apiKey:   apiKey,
 		model:    model,
-		client:   &http.Client{Timeout: 30 * time.Second},
+		// 60s covers Ollama cold-start (lazy model load on first request)
+		// plus a long system prompt with the catalog inlined. Real OpenAI
+		// answers in <5s; we size for the slow path so local models work
+		// out of the box.
+		client: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
