@@ -39,8 +39,17 @@
   const productsEl = document.getElementById('products');
   const addForm = document.getElementById('add-form');
   const readonlyBanner = document.getElementById('readonly-banner');
+  const editBanner = document.getElementById('edit-banner');
+  const editBannerId = document.getElementById('edit-banner-id');
+  const cancelEditBtn = document.getElementById('cancel-edit');
+  const saveBtn = document.getElementById('save-btn');
   const brandEl = document.getElementById('brand-name');
   const healthEl = document.getElementById('health');
+
+  // Closure-scoped catalog snapshot for click-to-edit. Refreshed on every
+  // GET /api/products so editing always operates on server-confirmed data,
+  // not stale render state.
+  let currentProducts = [];
 
   async function refreshCatalog() {
     try {
@@ -49,8 +58,9 @@
       const writable = !!view.writable;
       readonlyBanner.style.display = writable ? 'none' : 'block';
       addForm.querySelectorAll('input, textarea, button').forEach(el => { el.disabled = !writable; });
-      renderProducts(view.products || []);
-      healthEl.textContent = 'ok · ' + (view.products || []).length + ' products';
+      currentProducts = view.products || [];
+      renderProducts(currentProducts);
+      healthEl.textContent = 'ok · ' + currentProducts.length + ' products';
     } catch (e) {
       healthEl.textContent = 'error: ' + e.message;
     }
@@ -73,7 +83,10 @@
               <div class="name">${escapeHTML(p.name || p.id)}</div>
               <div class="id">${escapeHTML(p.id)}</div>
             </div>
-            <button class="del" data-id="${escapeHTML(p.id)}">Delete</button>
+            <div class="actions">
+              <button class="edit" data-id="${escapeHTML(p.id)}">Edit</button>
+              <button class="del" data-id="${escapeHTML(p.id)}">Delete</button>
+            </div>
           </div>
           <div class="desc">${escapeHTML(p.description || '')}</div>
           <div class="meta">
@@ -112,6 +125,46 @@
   const clearBtn = document.getElementById('clear-form');
   if (clearBtn) {
     clearBtn.addEventListener('click', () => {
+      exitEditMode();
+      addForm.reset();
+      addForm.querySelector('input[name="available"]').checked = true;
+      addForm.querySelector('input[name="currency"]').value = 'USD';
+    });
+  }
+
+  // Edit mode: clicking a product's Edit button populates the form with
+  // its current values and switches the submit-button label. The ID
+  // input is locked (readonly) while editing because renaming an ID
+  // would create a sibling product, not rename in place — the server
+  // upsert is keyed on ID. Cancel / Clear / successful Save all exit
+  // edit mode and restore the new-product affordance.
+  function enterEditMode(p) {
+    addForm.dataset.editId = p.id;
+    addForm.querySelector('input[name="id"]').value = p.id;
+    addForm.querySelector('input[name="id"]').readOnly = true;
+    addForm.querySelector('input[name="name"]').value = p.name || '';
+    addForm.querySelector('textarea[name="description"]').value = p.description || '';
+    addForm.querySelector('input[name="price"]').value = p.price || '';
+    addForm.querySelector('input[name="currency"]').value = p.currency || 'USD';
+    addForm.querySelector('input[name="url"]').value = p.url || '';
+    addForm.querySelector('input[name="tags"]').value = (p.tags || []).join(', ');
+    addForm.querySelector('input[name="available"]').checked = !!p.available;
+    addForm.querySelectorAll('input, textarea').forEach(el => el.dispatchEvent(new Event('input', { bubbles: true })));
+    editBannerId.textContent = p.id;
+    editBanner.classList.add('active');
+    saveBtn.textContent = 'Update product';
+    addForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function exitEditMode() {
+    delete addForm.dataset.editId;
+    addForm.querySelector('input[name="id"]').readOnly = false;
+    editBanner.classList.remove('active');
+    editBannerId.textContent = '—';
+    saveBtn.textContent = 'Save product';
+  }
+  if (cancelEditBtn) {
+    cancelEditBtn.addEventListener('click', () => {
+      exitEditMode();
       addForm.reset();
       addForm.querySelector('input[name="available"]').checked = true;
       addForm.querySelector('input[name="currency"]').value = 'USD';
@@ -133,6 +186,7 @@
     };
     try {
       await api('/api/products', { method: 'POST', body: JSON.stringify(product) });
+      exitEditMode();
       addForm.reset();
       // restore default checkbox state
       addForm.querySelector('input[name="available"]').checked = true;
@@ -144,12 +198,20 @@
   });
 
   productsEl.addEventListener('click', async (ev) => {
-    const btn = ev.target.closest('button.del');
-    if (!btn) return;
-    const id = btn.dataset.id;
+    const editBtn = ev.target.closest('button.edit');
+    if (editBtn) {
+      const id = editBtn.dataset.id;
+      const p = currentProducts.find(x => x.id === id);
+      if (p) enterEditMode(p);
+      return;
+    }
+    const delBtn = ev.target.closest('button.del');
+    if (!delBtn) return;
+    const id = delBtn.dataset.id;
     if (!confirm('Delete ' + id + '?')) return;
     try {
       await api('/api/products/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (addForm.dataset.editId === id) exitEditMode();
       await refreshCatalog();
     } catch (e) {
       alert('Delete failed: ' + e.message);

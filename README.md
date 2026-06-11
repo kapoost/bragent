@@ -80,6 +80,11 @@ Feed `url` accepts `file://` for local fixtures and `http(s)://` for production.
 
 ## Deployment recipes
 
+For end-to-end public-internet recipes — **Tailscale Funnel**, **VPS +
+Caddy + Tailscale backplane**, **all-in-one VPS** — see
+[`docs/deployment.md`](docs/deployment.md). The systemd unit below is a
+building block you'll reuse from those recipes.
+
 ### Bare VPS (systemd)
 
 ```ini
