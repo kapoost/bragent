@@ -15,7 +15,9 @@ Local: `/Users/kapoost/adcp/bragent/`.
 | M2 | ✅ | `f485f95` | `si_initiate_session`, SQLite session store, `--simulate-host` CLI smoke loop |
 | M3 | ✅ | `7ad1cbd` | `si_send_message`, `si_terminate_session`, mock LLM, `/.well-known/{brand,adagents}.json` |
 | CI | ✅ | `d47280c` | GitHub Actions: `go vet`, build, `--simulate-host` assertions |
-| M4 | ✅ | _pending_ | OpenAI-compatible HTTP provider (Ollama/llama.cpp/vLLM/OpenAI), config-gated via `[llm].endpoint`, Mock stays default |
+| M4 | ✅ | `f6c4e97` | OpenAI-compatible HTTP provider (Ollama/llama.cpp/vLLM/OpenAI), config-gated via `[llm].endpoint`, Mock stays default |
+| M5a | ✅ | `923c3d1` | additive AdCP 3.1.x spec sync: `availability_status`, `context`/`ext` pass-through, hyphenated specialism alias |
+| M5b | ✅ | `e4b78d1` | embedded `/admin/` UI: catalog CRUD on file:// feed (atomic write) + in-process chat panel; token-gated, off by default |
 
 Pełen SI lifecycle smoke-tested: `initiate → message → buy-intent → pending_handoff → terminate` z SQLite audit trail.
 
