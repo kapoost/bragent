@@ -44,9 +44,14 @@ func (h *Handlers) Handle(ctx context.Context, method string, params json.RawMes
 
 func (h *Handlers) capabilities() CapabilitiesResponse {
 	return CapabilitiesResponse{
-		AdCPVersion:        "3.0",
-		Role:               "brand",
-		Specialisms:        []string{"sponsored_intelligence.core"},
+		AdCPVersion: "3.0",
+		Role:        "brand",
+		// Emit both the legacy underscored ID we shipped with M1
+		// (`sponsored_intelligence.core`) and the spec-canonical
+		// hyphenated ID (`sponsored-intelligence`) introduced in
+		// 3.1.0-rc.* AdCPSpecialism enum. Hosts that match either
+		// form pick us up; the duplication is harmless.
+		Specialisms:        []string{"sponsored_intelligence.core", "sponsored-intelligence"},
 		SupportedProtocols: []string{"sponsored_intelligence"},
 		Capabilities: []string{
 			"get_adcp_capabilities",
@@ -76,13 +81,14 @@ func (h *Handlers) getOffering(_ context.Context, params json.RawMessage) (any, 
 	offerings := make([]Offering, 0, len(products))
 	for _, p := range products {
 		offerings = append(offerings, Offering{
-			OfferingID:  p.ID,
-			Title:       p.Name,
-			Description: p.Description,
-			Price:       p.Price,
-			Currency:    p.Currency,
-			URL:         p.URL,
-			Available:   p.Available,
+			OfferingID:         p.ID,
+			Title:              p.Name,
+			Description:        p.Description,
+			Price:              p.Price,
+			Currency:           p.Currency,
+			URL:                p.URL,
+			Available:          p.Available,
+			AvailabilityStatus: availabilityFromFeed(p.Available),
 		})
 	}
 
@@ -104,7 +110,19 @@ func (h *Handlers) getOffering(_ context.Context, params json.RawMessage) (any, 
 			"This preview represents %s based on their published product feed. Final price and availability are confirmed only on %s.",
 			h.cfg.Brand.Name, h.cfg.Brand.Domain,
 		),
+		Context: req.Context,
 	}, nil
+}
+
+// availabilityFromFeed maps the boolean feed flag to the spec
+// availability_status enum. Conservative defaults: a present, in-stock
+// product → "available"; out-of-stock → "sold_out". Brands can later
+// publish richer states by extending the feed schema.
+func availabilityFromFeed(available bool) AvailabilityStatus {
+	if available {
+		return AvailabilityAvailable
+	}
+	return AvailabilitySoldOut
 }
 
 func randomToken() (string, error) {

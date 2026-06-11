@@ -78,6 +78,7 @@ func (h *Handlers) initiateSession(ctx context.Context, params json.RawMessage) 
 		},
 		BrandName:   h.cfg.Brand.Name,
 		BrandDomain: h.cfg.Brand.Domain,
+		Context:     req.Context,
 	}, nil
 }
 

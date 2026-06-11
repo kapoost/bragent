@@ -97,6 +97,7 @@ func (h *Handlers) sendMessage(ctx context.Context, params json.RawMessage) (any
 		SessionID:     req.SessionID,
 		SessionStatus: reply.SessionStatus,
 		Response:      SessionTurnResponse{Message: reply.Message},
+		Context:       req.Context,
 	}
 	if reply.HandoffURL != "" {
 		resp.Handoff = &HandoffInfo{URL: reply.HandoffURL, SessionID: req.SessionID}
@@ -136,5 +137,6 @@ func (h *Handlers) terminateSession(ctx context.Context, params json.RawMessage)
 		SessionID:     req.SessionID,
 		SessionStatus: "terminated",
 		Reason:        req.Reason,
+		Context:       req.Context,
 	}, nil
 }
