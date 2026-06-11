@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kapoost/bragent/internal/admin"
 	"github.com/kapoost/bragent/internal/config"
 	"github.com/kapoost/bragent/internal/feed"
 	"github.com/kapoost/bragent/internal/llm"
@@ -87,8 +88,14 @@ func main() {
 	wk := wellknown.New(cfg)
 	server := mcp.NewServer(cfg.Server, handlers, wk)
 
-	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s llm=%s",
-		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName)
+	adminState := "off"
+	if cfg.Admin.Enabled {
+		server.WithAdmin(admin.New(cfg.Admin.Token, catalog, handlers, cfg.Brand.Name))
+		adminState = "on"
+	}
+
+	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s llm=%s admin=%s",
+		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, adminState)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Run(ctx) }()

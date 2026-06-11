@@ -32,3 +32,13 @@ model = ""
 # endpoint = "http://localhost:11434/v1"
 # api_key = ""
 # model = "llama3.2"
+
+# Optional admin UI at /admin/ — product CRUD on the file:// feed plus an
+# in-process chat panel for testing. Off by default. To enable, flip
+# `enabled = true` AND set a non-empty `token`. An enabled-without-token
+# config silently disables the surface (safe-fail). Token-gated via the
+# X-Admin-Token header on every request; the JS bootstraps from a one-time
+# `?token=...` query param. Public well-knowns and /mcp stay unauth.
+[admin]
+enabled = false
+token = ""

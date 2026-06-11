@@ -14,6 +14,18 @@ type Config struct {
 	Feed   Feed   `toml:"feed"`
 	LLM    LLM    `toml:"llm"`
 	Store  Store  `toml:"store"`
+	Admin  Admin  `toml:"admin"`
+}
+
+// Admin gates the optional /admin/ surface: a small embedded web UI for
+// CRUD on a file:// product feed plus an in-process chat panel against
+// the brand agent's own SI handlers. Off by default — production
+// deployments opt in by setting enabled=true and a token. The token is
+// required when enabled is true; an empty token disables admin even if
+// enabled was flipped, so a forgotten config doesn't expose CRUD.
+type Admin struct {
+	Enabled bool   `toml:"enabled"`
+	Token   string `toml:"token"`
 }
 
 // Store points at the SQLite session-state database. Empty path or
@@ -84,6 +96,11 @@ func (c *Config) applyDefaultsAndValidate() error {
 	}
 	if c.Store.Path == "" {
 		c.Store.Path = ".cache/bragent.db"
+	}
+	// Admin without a token is unsafe — silently disable rather than ship
+	// an open CRUD endpoint. Operators see this in the boot log.
+	if c.Admin.Enabled && c.Admin.Token == "" {
+		c.Admin.Enabled = false
 	}
 	return nil
 }

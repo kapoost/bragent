@@ -9,6 +9,7 @@ package feed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,12 @@ import (
 
 	"github.com/kapoost/bragent/internal/config"
 )
+
+// ErrFeedReadOnly signals that the configured feed source is remote
+// (http(s)://) and therefore cannot be mutated in place. Admin CRUD only
+// works against file:// feeds; remote feeds remain authoritative and the
+// admin UI surfaces this as a 409.
+var ErrFeedReadOnly = errors.New("feed source is read-only (not a file:// URL)")
 
 type Product struct {
 	ID          string            `json:"id"`
@@ -218,6 +225,103 @@ func (c *Catalog) Search(query string, limit int) []Product {
 		out = append(out, c.products[id])
 	}
 	return out
+}
+
+// Upsert inserts or replaces a product by ID, then persists the full
+// catalog snapshot to the file feed atomically. Returns ErrFeedReadOnly
+// when the configured source is not a file:// URL — remote feeds stay
+// authoritative and the admin UI is expected to translate this to a 409.
+func (c *Catalog) Upsert(p Product) error {
+	if p.ID == "" {
+		return errors.New("product.id required")
+	}
+	path, ok := c.filePath()
+	if !ok {
+		return ErrFeedReadOnly
+	}
+	c.mu.Lock()
+	c.products[p.ID] = p
+	snap := c.snapshotLocked()
+	c.mu.Unlock()
+	return writeFeedAtomic(path, snap)
+}
+
+// Delete removes a product by ID and persists the catalog. The bool
+// return tells the caller whether the ID was present before deletion —
+// useful for the admin UI to distinguish 200 vs 404.
+func (c *Catalog) Delete(id string) (bool, error) {
+	path, ok := c.filePath()
+	if !ok {
+		return false, ErrFeedReadOnly
+	}
+	c.mu.Lock()
+	_, existed := c.products[id]
+	delete(c.products, id)
+	snap := c.snapshotLocked()
+	c.mu.Unlock()
+	if err := writeFeedAtomic(path, snap); err != nil {
+		return existed, err
+	}
+	return existed, nil
+}
+
+// Writable reports whether the feed source can be mutated (file:// URL).
+// The admin UI uses this to disable the add/edit form when running
+// against a remote catalog.
+func (c *Catalog) Writable() bool {
+	_, ok := c.filePath()
+	return ok
+}
+
+func (c *Catalog) filePath() (string, bool) {
+	if !strings.HasPrefix(c.cfg.URL, "file://") {
+		return "", false
+	}
+	return strings.TrimPrefix(c.cfg.URL, "file://"), true
+}
+
+func (c *Catalog) snapshotLocked() []Product {
+	ids := make([]string, 0, len(c.products))
+	for id := range c.products {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]Product, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, c.products[id])
+	}
+	return out
+}
+
+// writeFeedAtomic serialises the catalog with stable key order and 2-space
+// indent (matches the hand-edited feeds/example.json shape so diffs stay
+// readable), writes to a sibling tempfile, then renames into place. Crash
+// between write and rename leaves the original feed intact.
+func writeFeedAtomic(path string, products []Product) error {
+	body, err := json.MarshalIndent(products, "", "  ")
+	if err != nil {
+		return err
+	}
+	body = append(body, '\n')
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".feed-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(body); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func tokenize(s string) []string {

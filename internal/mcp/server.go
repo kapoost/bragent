@@ -23,11 +23,20 @@ type Server struct {
 	cfg     config.Server
 	handler Handler
 	extra   http.Handler // optional /.well-known/* handler delegated to wellknown.Handler
+	admin   http.Handler // optional /admin/* handler delegated to admin.Handler
 	http    *http.Server
 }
 
 func NewServer(cfg config.Server, h Handler, extra http.Handler) *Server {
 	return &Server{cfg: cfg, handler: h, extra: extra}
+}
+
+// WithAdmin attaches an optional /admin/* subtree. Off-path when nil so
+// the production zero-config posture matches CLAUDE.md: well-knowns and
+// /mcp only, no extra surface to audit.
+func (s *Server) WithAdmin(h http.Handler) *Server {
+	s.admin = h
+	return s
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -37,6 +46,10 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.extra != nil {
 		mux.Handle("/.well-known/brand.json", s.extra)
 		mux.Handle("/.well-known/adagents.json", s.extra)
+	}
+	if s.admin != nil {
+		mux.Handle("/admin", s.admin)
+		mux.Handle("/admin/", s.admin)
 	}
 
 	s.http = &http.Server{
