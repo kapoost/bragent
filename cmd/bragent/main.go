@@ -32,10 +32,21 @@ import (
 	"github.com/kapoost/bragent/internal/wellknown"
 )
 
+// Version is overridable at link time via `-ldflags "-X main.Version=..."`.
+// Default tracks the latest tagged release so `go install`-ed binaries report
+// something sensible without ldflags wiring.
+var Version = "0.1.0"
+
 func main() {
 	configPath := flag.String("config", "config.toml", "path to TOML configuration file")
 	simulateHost := flag.Bool("simulate-host", false, "after boot, issue a localhost si_initiate_session against ourselves and log the wire response, then exit. Useful for CI smoke and offline testing when no real SI host is available.")
+	showVersion := flag.Bool("version", false, "print bragent version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		os.Stdout.WriteString("bragent " + Version + "\n")
+		return
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
