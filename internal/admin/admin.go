@@ -23,6 +23,13 @@ import (
 //go:embed static/*
 var staticFS embed.FS
 
+// adminCookie carries the admin token for browser-initiated requests
+// that can't easily set X-Admin-Token: <script src="app.js">, page
+// reloads of /admin/, image fetches. Set HttpOnly + SameSite=Strict +
+// Path=/admin so it's never visible to other origins or paths. Session
+// cookie (no MaxAge) — clears when the browser closes.
+const adminCookie = "bragent_admin_token"
+
 // Handler is the /admin/ multiplexer. Holds direct references to the
 // catalog (for CRUD) and the SI dispatcher (for the chat panel). The
 // chat panel calls SI handlers in-process — same code path as the wire
@@ -50,6 +57,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid X-Admin-Token"})
 		return
 	}
+	h.ensureCookie(w, r)
 	path := strings.TrimPrefix(r.URL.Path, "/admin")
 	if path == "" || path == "/" {
 		h.serveStatic(w, r, "index.html")
@@ -71,10 +79,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// authorised accepts the token in either the X-Admin-Token header (used
-// by fetch() from the embedded JS) or a ?token=... query string (so a
-// freshly-pasted URL works without JavaScript writing the header). The
-// query path is dev-ergonomics only — production should use the header.
+// authorised accepts the token in three places, in priority order:
+//
+//  1. X-Admin-Token header — used by fetch() from the embedded JS for
+//     all JSON API calls.
+//  2. bragent_admin_token cookie — set on first successful auth so the
+//     browser can fetch /admin/app.js, reload /admin/, and pull other
+//     subresources without re-presenting the token.
+//  3. ?token=... query string — one-time URL bootstrap. The embedded JS
+//     strips it from the address bar after capture; the cookie inherits
+//     the auth for everything afterward.
+//
+// Empty configured token always denies — silent fail-safe documented in
+// config.applyDefaultsAndValidate.
 func (h *Handler) authorised(r *http.Request) bool {
 	if h.token == "" {
 		return false
@@ -82,10 +99,30 @@ func (h *Handler) authorised(r *http.Request) bool {
 	if r.Header.Get("X-Admin-Token") == h.token {
 		return true
 	}
+	if c, err := r.Cookie(adminCookie); err == nil && c.Value == h.token {
+		return true
+	}
 	if r.URL.Query().Get("token") == h.token {
 		return true
 	}
 	return false
+}
+
+// ensureCookie sets the admin session cookie if the current request
+// doesn't already carry it. Idempotent — repeat auth via header or
+// query won't duplicate Set-Cookie headers on the wire because the
+// browser already knows the value.
+func (h *Handler) ensureCookie(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(adminCookie); err == nil && c.Value == h.token {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     adminCookie,
+		Value:    h.token,
+		Path:     "/admin",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
 }
 
 func (h *Handler) serveStatic(w http.ResponseWriter, r *http.Request, name string) {
@@ -102,6 +139,11 @@ func (h *Handler) serveStatic(w http.ResponseWriter, r *http.Request, name strin
 	case strings.HasSuffix(name, ".css"):
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	}
+	// Defeat Safari/Chrome aggressive caching during iteration. The admin
+	// UI is tiny; the cost of re-fetching is irrelevant compared to the
+	// debug pain of stale JS while editing. Production users behind a
+	// reverse proxy can layer CDN caching above this if they want it.
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Write(b)
 }
 

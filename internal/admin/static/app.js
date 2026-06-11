@@ -85,6 +85,39 @@
     }).join('');
   }
 
+  // "Fill with example" populates every empty input from its data-example
+  // (mirrors the placeholder shown in the UI). Lets the operator save a
+  // working seed product in one click without re-typing the example.
+  //
+  // Safari quirk: a programmatic `value =` assignment does not rerun the
+  // required/pattern validity check. Dispatch an 'input' event so the
+  // browser updates form.checkValidity() — otherwise Save still pops
+  // "Fill out this field" on a field that visibly has a value.
+  //
+  // Guard each addEventListener with `if (btn)` so a missing element on
+  // some future HTML edit cannot abort the IIFE before the catalog/chat
+  // submit handlers bind. Both forms also carry `onsubmit="return false"`
+  // at the HTML level so an unbound handler never triggers a native
+  // form GET to /admin/api/... without auth.
+  const fillBtn = document.getElementById('fill-example');
+  if (fillBtn) {
+    fillBtn.addEventListener('click', () => {
+      addForm.querySelectorAll('input[data-example], textarea[data-example]').forEach(el => {
+        el.value = el.dataset.example;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      addForm.querySelector('input[name="available"]').checked = true;
+    });
+  }
+  const clearBtn = document.getElementById('clear-form');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      addForm.reset();
+      addForm.querySelector('input[name="available"]').checked = true;
+      addForm.querySelector('input[name="currency"]').value = 'USD';
+    });
+  }
+
   addForm.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = new FormData(addForm);
