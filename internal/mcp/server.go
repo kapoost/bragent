@@ -46,6 +46,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.extra != nil {
 		mux.Handle("/.well-known/brand.json", s.extra)
 		mux.Handle("/.well-known/adagents.json", s.extra)
+		mux.Handle("/.well-known/jwks.json", s.extra)
 	}
 	if s.admin != nil {
 		mux.Handle("/admin", s.admin)

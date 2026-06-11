@@ -4,6 +4,11 @@
 name = "Acme Outdoor"
 domain = "shop.acme-outdoor.example"
 logo_url = "https://shop.acme-outdoor.example/logo.png"
+# Opt in to brand-rights signing (M6.1). When set, bragent registers
+# verify_brand_claim in capabilities and publishes its public key at
+# /.well-known/jwks.json. The first boot mints an Ed25519 keypair at
+# this path with mode 0600. Leave empty to disable.
+signing_key_path = ".cache/signing.ed25519"
 
 [server]
 listen = ":8080"

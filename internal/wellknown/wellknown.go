@@ -16,13 +16,34 @@ import (
 	"net/http"
 
 	"github.com/kapoost/bragent/internal/config"
+	"github.com/kapoost/bragent/internal/signing"
 )
 
 type Handler struct {
-	cfg *config.Config
+	cfg    *config.Config
+	signer *signing.Signer // optional; only populated when brand-rights signing is wired
 }
 
 func New(cfg *config.Config) *Handler { return &Handler{cfg: cfg} }
+
+// WithSigner attaches a response-signing key so /.well-known/jwks.json
+// can publish its public half. Required for verify_brand_claim verifiers.
+func (h *Handler) WithSigner(s *signing.Signer) *Handler {
+	h.signer = s
+	return h
+}
+
+// JWKSJSON returns the brand agent's published JWK Set. Always returns
+// a (possibly empty) keys[] array — verifiers reading an empty set
+// learn definitively that this agent has no response-signing key,
+// rather than guessing from a 404.
+func (h *Handler) JWKSJSON() map[string]any {
+	keys := []any{}
+	if h.signer != nil {
+		keys = append(keys, h.signer.JWK())
+	}
+	return map[string]any{"keys": keys}
+}
 
 // BrandJSON returns the AAO Brand Protocol manifest. Minimal fields — we
 // leave editorial-rich data (logo, taglines, social) to the operator's
@@ -60,7 +81,7 @@ func (h *Handler) AdAgentsJSON() map[string]any {
 	}
 }
 
-// ServeHTTP routes the two well-known endpoints. Anything else returns 404
+// ServeHTTP routes the well-known endpoints. Anything else returns 404
 // so the MCP transport handler can take over for /mcp et al.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
@@ -68,6 +89,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, h.BrandJSON())
 	case "/.well-known/adagents.json":
 		writeJSON(w, h.AdAgentsJSON())
+	case "/.well-known/jwks.json":
+		writeJSON(w, h.JWKSJSON())
 	default:
 		http.NotFound(w, r)
 	}

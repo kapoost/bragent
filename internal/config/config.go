@@ -39,6 +39,12 @@ type Brand struct {
 	Name    string `toml:"name"`
 	Domain  string `toml:"domain"`
 	LogoURL string `toml:"logo_url"`
+	// SigningKeyPath is the on-disk Ed25519 keypair backing the
+	// verify_brand_claim signed_response envelope (M6.1). When empty the
+	// brand surface refuses to mint signed responses; verify_brand_claim
+	// returns an internal error so the operator sees the missing wire
+	// up. First boot with a populated path mints a fresh key.
+	SigningKeyPath string `toml:"signing_key_path"`
 }
 
 type Server struct {
@@ -97,6 +103,10 @@ func (c *Config) applyDefaultsAndValidate() error {
 	if c.Store.Path == "" {
 		c.Store.Path = ".cache/bragent.db"
 	}
+	// signing_key_path stays empty by default — operators opt in to
+	// brand-rights signing by setting it. Empty → verify_brand_claim is
+	// not registered in capabilities and the MCP method returns
+	// method_not_found.
 	// Admin without a token is unsafe — silently disable rather than ship
 	// an open CRUD endpoint. Operators see this in the boot log.
 	if c.Admin.Enabled && c.Admin.Token == "" {

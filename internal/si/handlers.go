@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/kapoost/bragent/internal/brand"
 	"github.com/kapoost/bragent/internal/config"
 	"github.com/kapoost/bragent/internal/feed"
 	"github.com/kapoost/bragent/internal/llm"
@@ -19,10 +20,19 @@ type Handlers struct {
 	catalog *feed.Catalog
 	store   *store.Store
 	llm     llm.Provider
+	brand   *brand.Handler // optional — wired when [brand].signing_key_path is set
 }
 
 func NewHandlers(cfg *config.Config, catalog *feed.Catalog, st *store.Store, provider llm.Provider) *Handlers {
 	return &Handlers{cfg: cfg, catalog: catalog, store: st, llm: provider}
+}
+
+// WithBrand attaches the brand-protocol surface (M6.1). Off when nil —
+// capabilities omits verify_brand_claim and the dispatcher returns
+// method_not_found, matching the spec's "tool absent → unsupported".
+func (h *Handlers) WithBrand(b *brand.Handler) *Handlers {
+	h.brand = b
+	return h
 }
 
 func (h *Handlers) Handle(ctx context.Context, method string, params json.RawMessage) (any, *mcp.Error) {
@@ -37,12 +47,34 @@ func (h *Handlers) Handle(ctx context.Context, method string, params json.RawMes
 		return h.sendMessage(ctx, params)
 	case "si_terminate_session":
 		return h.terminateSession(ctx, params)
+	case "verify_brand_claim":
+		if h.brand == nil {
+			return nil, &mcp.Error{Code: mcp.ErrMethodNotFound, Message: "verify_brand_claim not configured"}
+		}
+		return h.brand.VerifyBrandClaim(ctx, params)
 	default:
 		return nil, &mcp.Error{Code: mcp.ErrMethodNotFound, Message: "unknown method: " + method}
 	}
 }
 
 func (h *Handlers) capabilities() CapabilitiesResponse {
+	specialisms := []string{"sponsored_intelligence.core", "sponsored-intelligence"}
+	tools := []string{
+		"get_adcp_capabilities",
+		"si_get_offering",
+		"si_initiate_session",
+		"si_send_message",
+		"si_terminate_session",
+	}
+	protocols := []string{"sponsored_intelligence"}
+	if h.brand != nil {
+		// brand-rights is `preview` in the 3.1.x AdCPSpecialism enum;
+		// we advertise it alongside the SI specialism once the signer
+		// is wired so hosts that filter on brand-rights pick us up.
+		specialisms = append(specialisms, "brand-rights")
+		protocols = append(protocols, "brand")
+		tools = append(tools, "verify_brand_claim")
+	}
 	return CapabilitiesResponse{
 		AdCPVersion: "3.0",
 		Role:        "brand",
@@ -51,17 +83,11 @@ func (h *Handlers) capabilities() CapabilitiesResponse {
 		// hyphenated ID (`sponsored-intelligence`) introduced in
 		// 3.1.0-rc.* AdCPSpecialism enum. Hosts that match either
 		// form pick us up; the duplication is harmless.
-		Specialisms:        []string{"sponsored_intelligence.core", "sponsored-intelligence"},
-		SupportedProtocols: []string{"sponsored_intelligence"},
-		Capabilities: []string{
-			"get_adcp_capabilities",
-			"si_get_offering",
-			"si_initiate_session",
-			"si_send_message",
-			"si_terminate_session",
-		},
-		AgentName: h.cfg.Brand.Name,
-		AgentURL:  fmt.Sprintf("https://%s/mcp", h.cfg.Brand.Domain),
+		Specialisms:        specialisms,
+		SupportedProtocols: protocols,
+		Capabilities:       tools,
+		AgentName:          h.cfg.Brand.Name,
+		AgentURL:           fmt.Sprintf("https://%s/mcp", h.cfg.Brand.Domain),
 	}
 }
 

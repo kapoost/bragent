@@ -24,11 +24,13 @@ import (
 	"time"
 
 	"github.com/kapoost/bragent/internal/admin"
+	"github.com/kapoost/bragent/internal/brand"
 	"github.com/kapoost/bragent/internal/config"
 	"github.com/kapoost/bragent/internal/feed"
 	"github.com/kapoost/bragent/internal/llm"
 	"github.com/kapoost/bragent/internal/mcp"
 	"github.com/kapoost/bragent/internal/si"
+	"github.com/kapoost/bragent/internal/signing"
 	"github.com/kapoost/bragent/internal/store"
 	"github.com/kapoost/bragent/internal/wellknown"
 )
@@ -86,6 +88,22 @@ func main() {
 
 	handlers := si.NewHandlers(cfg, catalog, st, provider)
 	wk := wellknown.New(cfg)
+
+	// brand-rights signing (M6.1) is opt-in: when [brand].signing_key_path
+	// is set, mint or load the Ed25519 keypair, wire the brand handler
+	// onto SI handlers, publish the public key via JWKS. Failure to load
+	// is fatal — operators who configured signing meant it.
+	brandState := "off"
+	if cfg.Brand.SigningKeyPath != "" {
+		signer, err := signing.LoadOrCreate(cfg.Brand.SigningKeyPath)
+		if err != nil {
+			log.Fatalf("brand signing key: %v", err)
+		}
+		handlers.WithBrand(brand.NewHandler(cfg.Brand, signer, nil))
+		wk.WithSigner(signer)
+		brandState = "kid=" + signer.KeyID()
+	}
+
 	server := mcp.NewServer(cfg.Server, handlers, wk)
 
 	adminState := "off"
@@ -94,8 +112,8 @@ func main() {
 		adminState = "on"
 	}
 
-	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s llm=%s admin=%s",
-		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, adminState)
+	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s llm=%s admin=%s brand_rights=%s",
+		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, adminState, brandState)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Run(ctx) }()
