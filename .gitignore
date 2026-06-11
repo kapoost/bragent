@@ -3,3 +3,6 @@
 *.exe
 .cache/
 config.toml
+
+# Claude Code session state — never commit.
+.claude/
