@@ -29,6 +29,7 @@ import (
 	"github.com/kapoost/bragent/internal/feed"
 	"github.com/kapoost/bragent/internal/llm"
 	"github.com/kapoost/bragent/internal/mcp"
+	"github.com/kapoost/bragent/internal/mcpstdio"
 	"github.com/kapoost/bragent/internal/si"
 	"github.com/kapoost/bragent/internal/signing"
 	"github.com/kapoost/bragent/internal/store"
@@ -44,11 +45,21 @@ func main() {
 	configPath := flag.String("config", "config.toml", "path to TOML configuration file")
 	simulateHost := flag.Bool("simulate-host", false, "after boot, issue a localhost si_initiate_session against ourselves and log the wire response, then exit. Useful for CI smoke and offline testing when no real SI host is available.")
 	showVersion := flag.Bool("version", false, "print bragent version and exit")
+	mcpStdio := flag.Bool("mcp-stdio", false, "speak Anthropic MCP over stdin/stdout instead of running the HTTP server. Wires the same SI handlers behind MCP tools so Claude Desktop (and other MCP hosts that launch via stdio) can converse with this brand agent. All logging is redirected to stderr to keep stdout clean for the JSON-RPC stream.")
 	flag.Parse()
 
 	if *showVersion {
 		os.Stdout.WriteString("bragent " + Version + "\n")
 		return
+	}
+
+	if *mcpStdio {
+		// stdout is reserved for MCP protocol frames — redirect log
+		// output to stderr so a stray Printf doesn't corrupt the JSON
+		// stream. log.SetOutput(os.Stderr) is the default, but make it
+		// explicit since this mode is the one that breaks loudly if
+		// some future caller forgets.
+		log.SetOutput(os.Stderr)
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -102,6 +113,19 @@ func main() {
 		handlers.WithBrand(brand.NewHandler(cfg.Brand, signer, nil))
 		wk.WithSigner(signer)
 		brandState = "kid=" + signer.KeyID()
+	}
+
+	// --mcp-stdio short-circuits the HTTP server. We reuse all the
+	// catalog/store/LLM/SI wiring above — the only thing that changes is
+	// the transport. Returns when stdin closes (Claude Desktop closing
+	// the pipe) or on SIGINT/SIGTERM via ctx.
+	if *mcpStdio {
+		log.Printf("bragent mcp-stdio brand=%q domain=%s products=%d store=%s llm=%s paying_principal=%s",
+			cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, cfg.Brand.PayingPrincipal)
+		if err := mcpstdio.New(handlers).Run(ctx); err != nil && err != context.Canceled {
+			log.Fatalf("mcp-stdio: %v", err)
+		}
+		return
 	}
 
 	server := mcp.NewServer(cfg.Server, handlers, wk)
