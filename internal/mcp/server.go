@@ -47,6 +47,12 @@ func (s *Server) Run(ctx context.Context) error {
 		mux.Handle("/.well-known/brand.json", s.extra)
 		mux.Handle("/.well-known/adagents.json", s.extra)
 		mux.Handle("/.well-known/jwks.json", s.extra)
+		// "/" catches the root visitor — a human who copy-pasted the
+		// agent URL out of a chat. wellknown.Handler serves a small
+		// landing page explaining what bragent is and linking the
+		// public surfaces. ServeMux precedence keeps /mcp, /admin and
+		// the well-knowns on their own handlers.
+		mux.Handle("/", s.extra)
 	}
 	if s.admin != nil {
 		mux.Handle("/admin", s.admin)

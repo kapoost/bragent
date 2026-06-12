@@ -14,6 +14,7 @@ package wellknown
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/kapoost/bragent/internal/config"
 	"github.com/kapoost/bragent/internal/signing"
@@ -90,10 +91,15 @@ func (h *Handler) AdAgentsJSON() map[string]any {
 	}
 }
 
-// ServeHTTP routes the well-known endpoints. Anything else returns 404
-// so the MCP transport handler can take over for /mcp et al.
+// ServeHTTP routes the well-known endpoints + the root landing page.
+// Anything else returns 404 so the MCP transport handler can take over
+// for /mcp et al. (the mux puts more-specific routes first).
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/":
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		_, _ = w.Write([]byte(h.IndexHTML()))
 	case "/.well-known/brand.json":
 		writeJSON(w, h.BrandJSON())
 	case "/.well-known/adagents.json":
@@ -103,6 +109,104 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// IndexHTML renders the public landing page served at /. Single-page,
+// no JS, no external assets — buyer agents don't crawl HTML but humans
+// who get this URL from a chat or a search result deserve to understand
+// what they're looking at. The page surfaces the paying_principal
+// disclosure (M6.2) at the top so the "who pays for this agent's
+// inference" answer is the first thing a visitor sees.
+func (h *Handler) IndexHTML() string {
+	brandName := htmlEscape(h.cfg.Brand.Name)
+	brandDomain := htmlEscape(h.cfg.Brand.Domain)
+	principal := htmlEscape(h.cfg.Brand.PayingPrincipal)
+	mcpURL := "https://" + brandDomain + "/mcp"
+	return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>` + brandName + ` — AdCP brand agent</title>
+<style>
+:root { --bg:#0f1115; --panel:#1a1d24; --fg:#e5e7eb; --fg-dim:#9ca3af; --accent:#60a5fa; --accent-2:#34d399; --border:#2d323d; --mono:ui-monospace,"JetBrains Mono",Menlo,monospace; }
+* { box-sizing:border-box; }
+body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--fg); line-height:1.55; }
+.wrap { max-width:760px; margin:0 auto; padding:48px 24px; }
+h1 { font-size:22px; font-weight:600; margin:0 0 4px; }
+h2 { font-size:13px; text-transform:uppercase; letter-spacing:0.06em; color:var(--fg-dim); margin:32px 0 8px; font-weight:600; }
+.sub { color:var(--fg-dim); font-size:14px; margin:0 0 24px; }
+.badge { display:inline-flex; gap:8px; align-items:center; background:var(--panel); border:1px solid var(--accent-2); color:var(--accent-2); padding:8px 12px; border-radius:6px; font-size:13px; margin-bottom:8px; }
+.badge code { font-family:var(--mono); font-size:12px; color:var(--fg); }
+ul.surfaces { list-style:none; padding:0; margin:0; }
+ul.surfaces li { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px 14px; margin-bottom:8px; }
+ul.surfaces a { color:var(--accent); text-decoration:none; font-family:var(--mono); font-size:13px; }
+ul.surfaces a:hover { text-decoration:underline; }
+ul.surfaces .desc { color:var(--fg-dim); font-size:12px; margin-top:4px; }
+pre { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px 14px; overflow-x:auto; font-family:var(--mono); font-size:12px; color:var(--fg); }
+.foot { color:var(--fg-dim); font-size:12px; margin-top:40px; padding-top:16px; border-top:1px solid var(--border); }
+.foot a { color:var(--fg-dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>` + brandName + `</h1>
+  <p class="sub">This server is an <a href="https://docs.adcontextprotocol.org/docs/sponsored-intelligence" style="color:var(--accent)">AdCP Sponsored Intelligence</a> brand agent. It is intended to be called by AI assistants and buyer agents over the Sponsored Intelligence protocol — not browsed by humans directly.</p>
+
+  <div class="badge">
+    Paying principal: <code>` + principal + `</code>
+  </div>
+  <p class="sub" style="font-size:12px; margin-top:4px">Economic disclosure: the entity above pays for this agent's inference. Maps to FTC material-connection doctrine and EU DSA Art. 26.</p>
+
+  <h2>Public surfaces</h2>
+  <ul class="surfaces">
+    <li>
+      <a href="/.well-known/brand.json">/.well-known/brand.json</a>
+      <div class="desc">AAO Brand Protocol manifest — brand identity + paying principal</div>
+    </li>
+    <li>
+      <a href="/.well-known/adagents.json">/.well-known/adagents.json</a>
+      <div class="desc">AdCP adagents.json — authorized agent declaration</div>
+    </li>
+    <li>
+      <a href="/.well-known/jwks.json">/.well-known/jwks.json</a>
+      <div class="desc">JWK Set — public key for verify_brand_claim signed responses (M6.1)</div>
+    </li>
+    <li>
+      <a href="/.well-known/healthz">/.well-known/healthz</a>
+      <div class="desc">Liveness probe</div>
+    </li>
+    <li>
+      <code style="color:var(--accent)">POST /mcp</code>
+      <div class="desc">MCP / JSON-RPC 2.0 endpoint — all SI methods (capabilities, get_offering, initiate/send/terminate session)</div>
+    </li>
+  </ul>
+
+  <h2>Quick capabilities probe</h2>
+  <pre>curl -sX POST ` + mcpURL + ` \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"get_adcp_capabilities"}' | jq</pre>
+
+  <div class="foot">
+    Powered by <a href="https://github.com/kapoost/bragent">bragent</a> — open-source single-binary AdCP SI brand agent · Apache 2.0
+  </div>
+</div>
+</body>
+</html>
+`
+}
+
+// htmlEscape is a tiny minimal escaper for the four characters that
+// could break the inline HTML template. Brand fields come from operator-
+// controlled TOML so the threat model is "stupid not malicious", but
+// escaping costs nothing.
+func htmlEscape(s string) string {
+	r := s
+	r = strings.ReplaceAll(r, "&", "&amp;")
+	r = strings.ReplaceAll(r, "<", "&lt;")
+	r = strings.ReplaceAll(r, ">", "&gt;")
+	r = strings.ReplaceAll(r, `"`, "&quot;")
+	return r
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
