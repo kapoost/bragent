@@ -1,0 +1,58 @@
+# Dependabot security + version updates.
+#
+# The repo's surface for supply-chain attack is small: two Go deps, a
+# handful of third-party GitHub Actions (checkout, setup-go, docker/*),
+# and the Dockerfile base image. Dependabot watches all three and opens
+# PRs against main when a CVE drops or a major version ships.
+#
+# Weekly cadence on a Monday morning so security PRs land at the start
+# of the work week, not Friday afternoon. Cooldown days prevent
+# Dependabot from chasing every patch release of every action — the
+# repo CI is fast but PR review attention is not.
+
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Warsaw
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - go
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Warsaw
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Warsaw
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: chore
+      include: scope
