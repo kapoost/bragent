@@ -108,12 +108,12 @@ func main() {
 
 	adminState := "off"
 	if cfg.Admin.Enabled {
-		server.WithAdmin(admin.New(cfg.Admin.Token, catalog, handlers, cfg.Brand.Name))
+		server.WithAdmin(admin.New(cfg.Admin.Token, catalog, handlers, st, cfg))
 		adminState = "on"
 	}
 
-	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s llm=%s admin=%s brand_rights=%s",
-		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, adminState, brandState)
+	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s llm=%s admin=%s brand_rights=%s paying_principal=%s",
+		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, adminState, brandState, cfg.Brand.PayingPrincipal)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Run(ctx) }()

@@ -44,6 +44,19 @@ func (h *Handlers) initiateSession(ctx context.Context, params json.RawMessage) 
 
 	consent := req.Identity != nil && req.Identity.ConsentGranted
 
+	// M6.2 — negotiate influence_mode. Empty → default presentation_only.
+	// Unknown → reject (silent downgrade would defeat the audit-trail
+	// purpose). The agreed mode is persisted on the session row so every
+	// subsequent send_message turn can echo it from a single source of
+	// truth.
+	mode := req.InfluenceMode
+	if mode == "" {
+		mode = InfluenceModePresentationOnly
+	}
+	if !mode.IsValid() {
+		return nil, &mcp.Error{Code: mcp.ErrInvalidParams, Message: "unknown influence_mode: " + string(mode)}
+	}
+
 	sess := store.Session{
 		SessionID:      sessionID,
 		SessionStatus:  "active",
@@ -55,6 +68,7 @@ func (h *Handlers) initiateSession(ctx context.Context, params json.RawMessage) 
 		ConsentGranted: consent,
 		Identity:       identityJSON,
 		Capabilities:   capabilitiesJSON,
+		InfluenceMode:  string(mode),
 	}
 	if err := h.store.CreateSession(ctx, sess); err != nil {
 		return nil, &mcp.Error{Code: mcp.ErrInternal, Message: err.Error()}
@@ -76,9 +90,11 @@ func (h *Handlers) initiateSession(ctx context.Context, params json.RawMessage) 
 		Response: SessionTurnResponse{
 			Message: welcome,
 		},
-		BrandName:   h.cfg.Brand.Name,
-		BrandDomain: h.cfg.Brand.Domain,
-		Context:     req.Context,
+		BrandName:       h.cfg.Brand.Name,
+		BrandDomain:     h.cfg.Brand.Domain,
+		PayingPrincipal: h.cfg.Brand.PayingPrincipal,
+		InfluenceMode:   mode,
+		Context:         req.Context,
 	}, nil
 }
 

@@ -45,6 +45,13 @@ type Brand struct {
 	// returns an internal error so the operator sees the missing wire
 	// up. First boot with a populated path mints a fresh key.
 	SigningKeyPath string `toml:"signing_key_path"`
+	// PayingPrincipal is the URL identifying who economically funds this
+	// agent's inference — the "who pays for the tokens" disclosure
+	// primitive (M6.2). Surfaced verbatim in /.well-known/brand.json and
+	// in get_adcp_capabilities so hosts (and downstream users) can render
+	// a "you are talking to a representative of X" trust badge. Defaults
+	// to https://<brand.domain> when empty.
+	PayingPrincipal string `toml:"paying_principal"`
 }
 
 type Server struct {
@@ -102,6 +109,13 @@ func (c *Config) applyDefaultsAndValidate() error {
 	}
 	if c.Store.Path == "" {
 		c.Store.Path = ".cache/bragent.db"
+	}
+	// Default paying_principal to https://<brand.domain> — the canonical
+	// case is that the brand pays for its own agent's inference. Operators
+	// who run a third-party SI surface override this with the actual
+	// economic principal's URL (e.g., a hosting agency).
+	if c.Brand.PayingPrincipal == "" && c.Brand.Domain != "" {
+		c.Brand.PayingPrincipal = "https://" + c.Brand.Domain
 	}
 	// signing_key_path stays empty by default — operators opt in to
 	// brand-rights signing by setting it. Empty → verify_brand_claim is

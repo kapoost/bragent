@@ -88,6 +88,12 @@ func (h *Handlers) capabilities() CapabilitiesResponse {
 		Capabilities:       tools,
 		AgentName:          h.cfg.Brand.Name,
 		AgentURL:           fmt.Sprintf("https://%s/mcp", h.cfg.Brand.Domain),
+		// M6.2 — economic disclosure + influence-mode advertise. Hosts
+		// that don't know the field ignore it; hosts that do can render
+		// a "paid for by X" trust badge from the capabilities response
+		// alone, without a second /.well-known/brand.json fetch.
+		PayingPrincipal:         h.cfg.Brand.PayingPrincipal,
+		InfluenceModesSupported: SupportedInfluenceModes,
 	}
 }
 

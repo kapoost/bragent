@@ -48,6 +48,12 @@ func (h *Handler) JWKSJSON() map[string]any {
 // BrandJSON returns the AAO Brand Protocol manifest. Minimal fields — we
 // leave editorial-rich data (logo, taglines, social) to the operator's
 // own brand.json on the brand's primary domain.
+//
+// paying_principal is M6.2's economic disclosure primitive: the URL of
+// the party economically responsible for this agent's inference. Buyer
+// agents and end-user surfaces can render "paid for by <principal>"
+// without needing to crawl billing or invoice records. Mapped to FTC
+// "material connection" doctrine and EU DSA Art. 26.
 func (h *Handler) BrandJSON() map[string]any {
 	out := map[string]any{
 		"$schema":     "https://agenticadvertising.org/schemas/v1/brand.json",
@@ -57,6 +63,9 @@ func (h *Handler) BrandJSON() map[string]any {
 	}
 	if h.cfg.Brand.LogoURL != "" {
 		out["logo_url"] = h.cfg.Brand.LogoURL
+	}
+	if h.cfg.Brand.PayingPrincipal != "" {
+		out["paying_principal"] = h.cfg.Brand.PayingPrincipal
 	}
 	return out
 }

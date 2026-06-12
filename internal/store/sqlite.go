@@ -22,7 +22,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 type Store struct {
 	db *sql.DB
@@ -39,6 +39,10 @@ type Session struct {
 	ConsentGranted bool
 	Identity      string // JSON blob
 	Capabilities  string // JSON blob
+	// InfluenceMode (M6.2 / schema v2) — string form of si.InfluenceMode,
+	// stored verbatim so a downstream audit consumer can replay the
+	// negotiation without needing the Go enum.
+	InfluenceMode string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
@@ -111,6 +115,15 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("schema v1: %w", err)
 		}
 	}
+	if v < 2 {
+		// M6.2 — add influence_mode column. SQLite ALTER TABLE ADD
+		// COLUMN is safe and atomic; existing rows backfill with NULL
+		// which the read path coerces to "presentation_only" so
+		// pre-M6.2 sessions remain replayable.
+		if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN influence_mode TEXT`); err != nil {
+			return fmt.Errorf("schema v2: %w", err)
+		}
+	}
 	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", currentSchemaVersion)); err != nil {
 		return fmt.Errorf("set user_version: %w", err)
 	}
@@ -128,11 +141,11 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 		INSERT INTO sessions (
 			session_id, session_status, media_buy_id, offering_id, placement,
 			locale, intent, consent_granted, identity_json, capabilities_json,
-			created_at, updated_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+			influence_mode, created_at, updated_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sess.SessionID, sess.SessionStatus, sess.MediaBuyID, sess.OfferingID, sess.Placement,
 		sess.Locale, sess.Intent, boolToInt(sess.ConsentGranted), sess.Identity, sess.Capabilities,
-		sess.CreatedAt.Format(time.RFC3339Nano), sess.UpdatedAt.Format(time.RFC3339Nano),
+		sess.InfluenceMode, sess.CreatedAt.Format(time.RFC3339Nano), sess.UpdatedAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return fmt.Errorf("insert session %s: %w", sess.SessionID, err)
@@ -159,15 +172,16 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 	var sess Session
 	var consent int
 	var createdAt, updatedAt string
+	var influenceMode sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT session_id, session_status, media_buy_id, offering_id, placement,
 		       locale, intent, consent_granted, identity_json, capabilities_json,
-		       created_at, updated_at
+		       influence_mode, created_at, updated_at
 		FROM sessions WHERE session_id = ?`, id,
 	).Scan(
 		&sess.SessionID, &sess.SessionStatus, &sess.MediaBuyID, &sess.OfferingID, &sess.Placement,
 		&sess.Locale, &sess.Intent, &consent, &sess.Identity, &sess.Capabilities,
-		&createdAt, &updatedAt,
+		&influenceMode, &createdAt, &updatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -176,6 +190,13 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 		return nil, fmt.Errorf("get session %s: %w", id, err)
 	}
 	sess.ConsentGranted = consent == 1
+	// Pre-M6.2 sessions have NULL influence_mode; coerce to the safe
+	// default so replay/audit code never sees an empty string.
+	if influenceMode.Valid && influenceMode.String != "" {
+		sess.InfluenceMode = influenceMode.String
+	} else {
+		sess.InfluenceMode = "presentation_only"
+	}
 	sess.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	sess.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
 	return &sess, nil

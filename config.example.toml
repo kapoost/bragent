@@ -9,6 +9,14 @@ logo_url = "https://shop.acme-outdoor.example/logo.png"
 # /.well-known/jwks.json. The first boot mints an Ed25519 keypair at
 # this path with mode 0600. Leave empty to disable.
 signing_key_path = ".cache/signing.ed25519"
+# Economic principal disclosure (M6.2). URL identifying who pays for this
+# agent's inference — surfaced in /.well-known/brand.json, in
+# get_adcp_capabilities, and on every si_initiate_session response so
+# hosts can render a "paid for by X" trust badge without crawling
+# billing records. Defaults to https://<domain> when empty. Override if
+# the brand runs on a third-party SI surface where a different entity
+# (e.g., a hosting agency) is the paying principal.
+paying_principal = ""
 
 [server]
 listen = ":8080"

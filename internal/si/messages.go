@@ -97,6 +97,10 @@ func (h *Handlers) sendMessage(ctx context.Context, params json.RawMessage) (any
 		SessionID:     req.SessionID,
 		SessionStatus: reply.SessionStatus,
 		Response:      SessionTurnResponse{Message: reply.Message},
+		// M6.2 — echo the negotiated influence_mode on every turn so each
+		// message in the host's audit log carries the mode it was
+		// generated under (Masse primitive #3, per-turn shape).
+		InfluenceMode: InfluenceMode(sess.InfluenceMode),
 		Context:       req.Context,
 	}
 	if reply.HandoffURL != "" {

@@ -16,8 +16,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/kapoost/bragent/internal/config"
 	"github.com/kapoost/bragent/internal/feed"
 	"github.com/kapoost/bragent/internal/mcp"
+	"github.com/kapoost/bragent/internal/store"
 )
 
 //go:embed static/*
@@ -31,25 +33,27 @@ var staticFS embed.FS
 const adminCookie = "bragent_admin_token"
 
 // Handler is the /admin/ multiplexer. Holds direct references to the
-// catalog (for CRUD) and the SI dispatcher (for the chat panel). The
-// chat panel calls SI handlers in-process — same code path as the wire
-// MCP route, no second HTTP hop.
+// catalog (for CRUD), the SI dispatcher (for the chat panel), and the
+// session store (for the M6.2 audit endpoint). The chat panel calls SI
+// handlers in-process — same code path as the wire MCP route, no second
+// HTTP hop.
 type Handler struct {
 	token   string
 	catalog *feed.Catalog
 	si      mcp.Handler
-	brand   string
+	store   *store.Store
+	cfg     *config.Config
 	static  fs.FS
 }
 
-func New(token string, catalog *feed.Catalog, si mcp.Handler, brand string) *Handler {
+func New(token string, catalog *feed.Catalog, si mcp.Handler, st *store.Store, cfg *config.Config) *Handler {
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		// Compile-time guaranteed by the embed directive; panic on drift
 		// rather than silently boot with no UI.
 		panic("admin: embedded static missing: " + err.Error())
 	}
-	return &Handler{token: token, catalog: catalog, si: si, brand: brand, static: sub}
+	return &Handler{token: token, catalog: catalog, si: si, store: st, cfg: cfg, static: sub}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +76,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteProduct(w, r, strings.TrimPrefix(path, "/api/products/"))
 	case path == "/api/chat" && r.Method == http.MethodPost:
 		h.chat(w, r)
+	case strings.HasPrefix(path, "/api/sessions/") && strings.HasSuffix(path, "/audit") && r.Method == http.MethodGet:
+		// M6.2 — Masse primitive #3 surface. Returns the per-turn record
+		// of an SI session: declared influence_mode, paying_principal,
+		// every message in order. Admin-token gated so operators (and,
+		// behind a proxy, regulators) can fetch the evidence without
+		// running a SQL client.
+		sid := strings.TrimSuffix(strings.TrimPrefix(path, "/api/sessions/"), "/audit")
+		h.sessionAudit(w, r, sid)
 	case strings.HasPrefix(path, "/"):
 		h.serveStatic(w, r, strings.TrimPrefix(path, "/"))
 	default:
@@ -155,7 +167,7 @@ type catalogView struct {
 
 func (h *Handler) listProducts(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, catalogView{
-		Brand:    h.brand,
+		Brand:    h.cfg.Brand.Name,
 		Writable: h.catalog.Writable(),
 		Products: h.catalog.All(),
 	})
@@ -254,5 +266,77 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// sessionAuditView is the wire shape of GET /admin/api/sessions/:id/audit.
+// Mirrors Masse primitive #3 (audit trail at the reasoning boundary):
+// every fact needed for "was this answer influenced by paid context, and
+// in what way?" is in one JSON document — paying principal, influence
+// mode, ordered turn log with timestamps.
+type sessionAuditView struct {
+	SessionID       string             `json:"session_id"`
+	SessionStatus   string             `json:"session_status"`
+	BrandName       string             `json:"brand_name"`
+	BrandDomain     string             `json:"brand_domain"`
+	PayingPrincipal string             `json:"paying_principal,omitempty"`
+	InfluenceMode   string             `json:"influence_mode"`
+	OfferingID      string             `json:"offering_id,omitempty"`
+	Intent          string             `json:"intent,omitempty"`
+	ConsentGranted  bool               `json:"consent_granted"`
+	CreatedAt       string             `json:"created_at"`
+	UpdatedAt       string             `json:"updated_at"`
+	Turns           []sessionAuditTurn `json:"turns"`
+}
+
+type sessionAuditTurn struct {
+	Turn      int    `json:"turn"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"created_at"`
+}
+
+func (h *Handler) sessionAudit(w http.ResponseWriter, r *http.Request, sid string) {
+	if sid == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session_id required"})
+		return
+	}
+	ctx := r.Context()
+	sess, err := h.store.GetSession(ctx, sid)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if sess == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found: " + sid})
+		return
+	}
+	msgs, err := h.store.ListMessages(ctx, sid)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	turns := make([]sessionAuditTurn, 0, len(msgs))
+	for _, m := range msgs {
+		turns = append(turns, sessionAuditTurn{
+			Turn:      m.Turn,
+			Role:      m.Role,
+			Content:   m.Content,
+			CreatedAt: m.CreatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
+		})
+	}
+	writeJSON(w, http.StatusOK, sessionAuditView{
+		SessionID:       sess.SessionID,
+		SessionStatus:   sess.SessionStatus,
+		BrandName:       h.cfg.Brand.Name,
+		BrandDomain:     h.cfg.Brand.Domain,
+		PayingPrincipal: h.cfg.Brand.PayingPrincipal,
+		InfluenceMode:   sess.InfluenceMode,
+		OfferingID:      sess.OfferingID,
+		Intent:          sess.Intent,
+		ConsentGranted:  sess.ConsentGranted,
+		CreatedAt:       sess.CreatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
+		UpdatedAt:       sess.UpdatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
+		Turns:           turns,
+	})
 }
 

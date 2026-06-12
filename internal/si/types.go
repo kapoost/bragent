@@ -19,6 +19,54 @@ package si
 
 import "encoding/json"
 
+// InfluenceMode declares HOW sponsored context is intended to participate
+// in the buyer-side reasoning chain — the M6.2 / experimental primitive
+// proposed in #wg-campaign-sponsored-intelligence (2026-06-11). The
+// brand agent publishes which modes it supports via capabilities; the
+// host negotiates a mode at si_initiate_session and the brand agent
+// echoes the agreed mode on every turn so the audit trail is per-turn.
+//
+//   - presentation_only: the agent's outputs MAY appear as a labelled
+//     sponsored card, but MUST NOT be folded into the host's reasoning
+//     substrate. Default and safest.
+//   - reasoning_context: outputs MAY be consumed as evidence inside the
+//     host model's reasoning chain. Carries a stronger disclosure
+//     obligation on the host side.
+//   - comparison_set: outputs are one of several comparable options
+//     surfaced to the user; ranking is the host's responsibility.
+//
+// Spec note: this is not yet AdCP-canonical. We declare it under a
+// brand-namespaced extension key so wire compatibility with hosts that
+// don't know the field is preserved (they just ignore it).
+type InfluenceMode string
+
+const (
+	InfluenceModePresentationOnly InfluenceMode = "presentation_only"
+	InfluenceModeReasoningContext InfluenceMode = "reasoning_context"
+	InfluenceModeComparisonSet    InfluenceMode = "comparison_set"
+)
+
+// SupportedInfluenceModes is the closed set advertised via capabilities.
+// Adding a mode here requires also teaching the SI handlers to validate
+// and persist it.
+var SupportedInfluenceModes = []InfluenceMode{
+	InfluenceModePresentationOnly,
+	InfluenceModeReasoningContext,
+	InfluenceModeComparisonSet,
+}
+
+// IsValid reports whether the mode is one this brand agent recognises.
+// Unknown modes are rejected at si_initiate_session rather than silently
+// downgraded — silent downgrade would defeat the audit-trail purpose.
+func (m InfluenceMode) IsValid() bool {
+	for _, x := range SupportedInfluenceModes {
+		if x == m {
+			return true
+		}
+	}
+	return false
+}
+
 // AvailabilityStatus mirrors enums/offering-availability-status.json from
 // 3.1.0-rc.11. Brand agents emit a structured availability state on each
 // offering / matching product so hosts can distinguish "low stock" from
@@ -74,14 +122,24 @@ type Offering struct {
 
 // CapabilitiesResponse — what get_adcp_capabilities returns for this brand
 // agent. specialisms/supported_protocols values track AdCP 3.0.
+//
+// PayingPrincipal (M6.2) duplicates the brand.json field on purpose: hosts
+// that have already issued a capabilities probe can render the trust
+// badge without a second /.well-known/ fetch.
+//
+// InfluenceModesSupported (M6.2) advertises which influence_mode values
+// si_initiate_session will accept. Hosts that don't recognise this field
+// continue working — default mode is presentation_only either way.
 type CapabilitiesResponse struct {
-	AdCPVersion        string   `json:"adcp_version"`
-	Role               string   `json:"role"`
-	Specialisms        []string `json:"specialisms"`
-	SupportedProtocols []string `json:"supported_protocols"`
-	Capabilities       []string `json:"capabilities"`
-	AgentName          string   `json:"agent_name"`
-	AgentURL           string   `json:"agent_url"`
+	AdCPVersion             string          `json:"adcp_version"`
+	Role                    string          `json:"role"`
+	Specialisms             []string        `json:"specialisms"`
+	SupportedProtocols      []string        `json:"supported_protocols"`
+	Capabilities            []string        `json:"capabilities"`
+	AgentName               string          `json:"agent_name"`
+	AgentURL                string          `json:"agent_url"`
+	PayingPrincipal         string          `json:"paying_principal,omitempty"`
+	InfluenceModesSupported []InfluenceMode `json:"influence_modes_supported,omitempty"`
 }
 
 // InitiateSessionRequest — input to si_initiate_session. Matches the partial
@@ -98,8 +156,12 @@ type InitiateSessionRequest struct {
 	OfferingToken         string                 `json:"offering_token,omitempty"`
 	SupportedCapabilities map[string]interface{} `json:"supported_capabilities,omitempty"`
 	Locale                string                 `json:"locale,omitempty"`
-	Context               json.RawMessage        `json:"context,omitempty"`
-	Ext                   json.RawMessage        `json:"ext,omitempty"`
+	// InfluenceMode (M6.2) — host's negotiated stance on how this
+	// session's outputs will participate in its reasoning chain. Default
+	// presentation_only. Brand agent rejects unknown values.
+	InfluenceMode InfluenceMode   `json:"influence_mode,omitempty"`
+	Context       json.RawMessage `json:"context,omitempty"`
+	Ext           json.RawMessage `json:"ext,omitempty"`
 }
 
 // Identity — host-side user identity attached to the session. consent_granted
@@ -123,8 +185,16 @@ type InitiateSessionResponse struct {
 	BrandName     string                 `json:"brand_name"`
 	BrandDomain   string                 `json:"brand_domain"`
 	Capabilities  map[string]interface{} `json:"capabilities,omitempty"`
-	Context       json.RawMessage        `json:"context,omitempty"`
-	Ext           json.RawMessage        `json:"ext,omitempty"`
+	// PayingPrincipal (M6.2) echoes brand.json so a host that initiated
+	// without first crawling well-known can still render the trust badge
+	// from the session-initiate response alone.
+	PayingPrincipal string `json:"paying_principal,omitempty"`
+	// InfluenceMode (M6.2) — agreed mode for this session. Always
+	// non-empty in the response (defaulted to presentation_only when the
+	// host didn't ask).
+	InfluenceMode InfluenceMode   `json:"influence_mode,omitempty"`
+	Context       json.RawMessage `json:"context,omitempty"`
+	Ext           json.RawMessage `json:"ext,omitempty"`
 }
 
 // SessionTurnResponse — the brand agent's user-facing payload for a single
@@ -157,8 +227,13 @@ type SendMessageResponse struct {
 	SessionStatus string              `json:"session_status"`
 	Response      SessionTurnResponse `json:"response"`
 	Handoff       *HandoffInfo        `json:"handoff,omitempty"`
-	Context       json.RawMessage     `json:"context,omitempty"`
-	Ext           json.RawMessage     `json:"ext,omitempty"`
+	// InfluenceMode (M6.2) — echoed per-turn so each message in the host's
+	// audit log carries the mode under which it was generated. Lets a
+	// regulator answer "was this answer influenced by paid context, and
+	// in what way?" from the wire trace alone.
+	InfluenceMode InfluenceMode   `json:"influence_mode,omitempty"`
+	Context       json.RawMessage `json:"context,omitempty"`
+	Ext           json.RawMessage `json:"ext,omitempty"`
 }
 
 // HandoffInfo — the commerce destination the host hands the user back to
