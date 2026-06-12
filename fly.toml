@@ -1,0 +1,59 @@
+# bragent on Fly.io — reference deployment for the AdCP SI WG demo.
+#
+# - Free-tier sizing: shared-cpu-1x, 256MB RAM is plenty for the Go
+#   binary + SQLite session store. The LLM runs out-of-process via the
+#   configured /v1/chat/completions endpoint (Anthropic/OpenAI/Groq/…)
+#   so there is no model weight footprint here.
+#
+# - Secrets land via `fly secrets set BRAGENT_LLM_API_KEY=...` etc, NOT
+#   into this file (they would be readable in repo history). The config
+#   loader picks them up via env override in addition to TOML.
+#
+# - SQLite persistence: one 1GB volume mounted at /var/lib/bragent.
+#   Single-machine deployment — Fly volumes don't replicate, but session
+#   state for a brand-agent demo is also not worth replicating.
+#
+# - HTTPS auto-issued by Fly for *.fly.dev; custom domain works via
+#   `fly certs create your.brand.com` + CNAME.
+
+app = "bragent-demo"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Endpoint + model are non-secret; the api_key comes via `fly secrets set`.
+  BRAGENT_LLM_ENDPOINT = "https://api.anthropic.com/v1"
+  BRAGENT_LLM_MODEL    = "claude-haiku-4-5"
+  # Make the brand.json domain match the actual public hostname so buyer
+  # agents resolving via /.well-known/brand.json see a consistent identity.
+  BRAGENT_BRAND_DOMAIN = "bragent-demo.fly.dev"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Free-tier friendly: scale to zero when idle, wake on first request.
+  # The cold-start cost is ~1s (Go binary boot + SQLite open); acceptable
+  # for a demo. Comment out auto_stop_machines for always-warm production.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/.well-known/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[[mounts]]
+  source = "bragent_data"
+  destination = "/var/lib/bragent"
