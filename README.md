@@ -78,6 +78,15 @@ path = ".cache/bragent.db"
 
 Feed `url` accepts `file://` for local fixtures and `http(s)://` for production. JSON is the only format today — array of product objects matching `feed.Product` (see `feeds/example.json`).
 
+## Try it from Claude Desktop
+
+A public reference instance runs at <https://bragent-demo.fly.dev> — landing page, `/.well-known/brand.json`, full `/mcp` JSON-RPC. Hit the surfaces with `curl` or plug it into Claude Desktop in two ways:
+
+- **Python bridge** (zero changes to bragent, ~5-minute setup) — see [`examples/claude-desktop/README.md`](examples/claude-desktop/README.md). Useful when you want to point Claude Desktop at the deployed instance (or your own bragent) without running the Go binary locally.
+- **Native `--mcp-stdio` mode** — build the binary and let Claude Desktop launch it directly. Same SQLite store, same audit trail, no Python, no extra process. One binary, two wire formats (HTTP for buyer agents, stdio for model hosts).
+
+Either path exposes four MCP tools mapping 1:1 to AdCP SI methods (`si_get_offering`, `si_initiate_session`, `si_send_message`, `si_terminate_session`). The active `session_id` is kept by the bridge / stdio server so Claude doesn't have to thread it.
+
 ## Deployment recipes
 
 For end-to-end public-internet recipes — **Tailscale Funnel**, **VPS +
