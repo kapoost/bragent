@@ -29,6 +29,10 @@ primary_region = "fra"
   # Make the brand.json domain match the actual public hostname so buyer
   # agents resolving via /.well-known/brand.json see a consistent identity.
   BRAGENT_BRAND_DOMAIN = "bragent-demo.fly.dev"
+  # M6.3 demo panel — public /demo/ with read-only catalog, BYOK chat,
+  # auto-receipt synthesis, and an in-memory session store. Used as the
+  # WG-SI demo URL.
+  BRAGENT_DEMO_ENABLED = "true"
 
 [http_service]
   internal_port = 8080

@@ -26,6 +26,7 @@ import (
 	"github.com/kapoost/bragent/internal/admin"
 	"github.com/kapoost/bragent/internal/brand"
 	"github.com/kapoost/bragent/internal/config"
+	"github.com/kapoost/bragent/internal/demo"
 	"github.com/kapoost/bragent/internal/feed"
 	"github.com/kapoost/bragent/internal/llm"
 	"github.com/kapoost/bragent/internal/mcp"
@@ -141,8 +142,14 @@ func main() {
 		adminState = "on"
 	}
 
-	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s llm=%s admin=%s brand_rights=%s disclosure_required=%t",
-		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, adminState, brandState, cfg.Brand.Disclosure.Required)
+	demoState := "off"
+	if cfg.Demo.Enabled {
+		server.WithDemo(demo.New(cfg, catalog))
+		demoState = "on"
+	}
+
+	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s llm=%s admin=%s demo=%s brand_rights=%s disclosure_required=%t",
+		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, adminState, demoState, brandState, cfg.Brand.Disclosure.Required)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Run(ctx) }()

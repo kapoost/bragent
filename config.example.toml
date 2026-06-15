@@ -72,3 +72,18 @@ model = ""
 [admin]
 enabled = false
 token = ""
+
+# Optional public /demo/ panel — zero-token conformance demo for the
+# AdCP SI WG audience. When enabled, anyone with the URL can chat
+# with the brand agent and watch the sponsored_context envelope +
+# auto-synthesised receipt land on the wire panel. Sessions live
+# in process memory only — restart wipes them. BYOK supported for
+# Anthropic / OpenAI / Groq / DeepSeek (endpoint whitelist enforced
+# server-side; mock LLM fallback when no key is supplied). Catalog
+# is read-only on /demo/; only /admin/ mutates the feed.
+#
+# Off by default. On Fly we flip via BRAGENT_DEMO_ENABLED=true in
+# fly.toml so the published demo URL stays separate from a brand's
+# own production deploy.
+[demo]
+enabled = false

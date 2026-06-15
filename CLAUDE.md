@@ -21,6 +21,7 @@ Local: `/Users/kapoost/adcp/bragent/`.
 | M6.1 | ✅ | `01fbb33` | `verify_brand_claim` with Ed25519 JWS-signed responses, `/.well-known/jwks.json` |
 | M6.2 | ✅ | `3ce992e` | top-level `paying_principal` URL + `influence_mode` enum on SI responses (zero-th primitive proposed in WG-SI) |
 | M6.3 | ✅ | `3a402aa` | conformance pass for AdCP PR #5501: full `sponsored_context` envelope + `sponsored_context_receipt` with JWS-notarised audit trail; admin dual-trail; `--auto-receipt` synthesis in stdio + Python bridges. Tagged as **v0.2.0**. |
+| M6.4 | ✅ | _pending_ | public `/demo/` panel — zero-token, in-memory sessions, read-only catalog, BYOK chat (Anthropic/OpenAI/Groq/DeepSeek with endpoint whitelist), wire-view showing live `sponsored_context` + auto-synthesised receipt for the WG-SI audience. Off by default; `BRAGENT_DEMO_ENABLED=true` on Fly. |
 
 Pełen SI lifecycle smoke-tested: `initiate → message → buy-intent → pending_handoff → terminate` z SQLite audit trail.
 

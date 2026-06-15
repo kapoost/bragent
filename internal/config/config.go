@@ -15,6 +15,17 @@ type Config struct {
 	LLM    LLM    `toml:"llm"`
 	Store  Store  `toml:"store"`
 	Admin  Admin  `toml:"admin"`
+	Demo   Demo   `toml:"demo"`
+}
+
+// Demo gates the public /demo/ surface — a zero-token, in-memory-only
+// conformance demo for the AdCP SI WG audience. Off by default. When
+// enabled, anyone with the URL can use the chat and see the
+// sponsored_context envelope + receipt flow on the wire panel. Sessions
+// are NEVER persisted — process restart wipes them. Catalog is
+// read-only on /demo/.
+type Demo struct {
+	Enabled bool `toml:"enabled"`
 }
 
 // Admin gates the optional /admin/ surface: a small embedded web UI for
@@ -150,6 +161,9 @@ func (c *Config) applyEnvOverrides() {
 		// on. The validation pass still gates: empty token after this
 		// block silently disables admin.
 		c.Admin.Enabled = true
+	}
+	if v := os.Getenv("BRAGENT_DEMO_ENABLED"); v == "true" || v == "1" {
+		c.Demo.Enabled = true
 	}
 }
 

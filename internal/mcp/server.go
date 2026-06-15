@@ -24,6 +24,7 @@ type Server struct {
 	handler Handler
 	extra   http.Handler // optional /.well-known/* handler delegated to wellknown.Handler
 	admin   http.Handler // optional /admin/* handler delegated to admin.Handler
+	demo    http.Handler // optional /demo/* handler delegated to demo.Handler
 	http    *http.Server
 }
 
@@ -36,6 +37,14 @@ func NewServer(cfg config.Server, h Handler, extra http.Handler) *Server {
 // /mcp only, no extra surface to audit.
 func (s *Server) WithAdmin(h http.Handler) *Server {
 	s.admin = h
+	return s
+}
+
+// WithDemo attaches the public /demo/* surface (no auth, in-memory,
+// rate-limited). Used for the WG-SI conformance demo; off in
+// production by default.
+func (s *Server) WithDemo(h http.Handler) *Server {
+	s.demo = h
 	return s
 }
 
@@ -57,6 +66,10 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.admin != nil {
 		mux.Handle("/admin", s.admin)
 		mux.Handle("/admin/", s.admin)
+	}
+	if s.demo != nil {
+		mux.Handle("/demo", s.demo)
+		mux.Handle("/demo/", s.demo)
 	}
 
 	s.http = &http.Server{
