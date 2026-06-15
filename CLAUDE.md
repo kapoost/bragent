@@ -20,7 +20,7 @@ Local: `/Users/kapoost/adcp/bragent/`.
 | M5b | ✅ | `e4b78d1` | embedded `/admin/` UI: catalog CRUD on file:// feed (atomic write) + in-process chat panel; token-gated, off by default |
 | M6.1 | ✅ | `01fbb33` | `verify_brand_claim` with Ed25519 JWS-signed responses, `/.well-known/jwks.json` |
 | M6.2 | ✅ | `3ce992e` | top-level `paying_principal` URL + `influence_mode` enum on SI responses (zero-th primitive proposed in WG-SI) |
-| M6.3 | ✅ | _pending_ | conformance pass for AdCP PR #5501: full `sponsored_context` envelope + `sponsored_context_receipt` with JWS-notarised audit trail; admin dual-trail; `--auto-receipt` synthesis in stdio + Python bridges |
+| M6.3 | ✅ | `3a402aa` | conformance pass for AdCP PR #5501: full `sponsored_context` envelope + `sponsored_context_receipt` with JWS-notarised audit trail; admin dual-trail; `--auto-receipt` synthesis in stdio + Python bridges. Tagged as **v0.2.0**. |
 
 Pełen SI lifecycle smoke-tested: `initiate → message → buy-intent → pending_handoff → terminate` z SQLite audit trail.
 
