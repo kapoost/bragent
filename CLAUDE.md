@@ -18,6 +18,9 @@ Local: `/Users/kapoost/adcp/bragent/`.
 | M4 | ✅ | `f6c4e97` | OpenAI-compatible HTTP provider (Ollama/llama.cpp/vLLM/OpenAI), config-gated via `[llm].endpoint`, Mock stays default |
 | M5a | ✅ | `923c3d1` | additive AdCP 3.1.x spec sync: `availability_status`, `context`/`ext` pass-through, hyphenated specialism alias |
 | M5b | ✅ | `e4b78d1` | embedded `/admin/` UI: catalog CRUD on file:// feed (atomic write) + in-process chat panel; token-gated, off by default |
+| M6.1 | ✅ | `01fbb33` | `verify_brand_claim` with Ed25519 JWS-signed responses, `/.well-known/jwks.json` |
+| M6.2 | ✅ | `3ce992e` | top-level `paying_principal` URL + `influence_mode` enum on SI responses (zero-th primitive proposed in WG-SI) |
+| M6.3 | ✅ | _pending_ | conformance pass for AdCP PR #5501: full `sponsored_context` envelope + `sponsored_context_receipt` with JWS-notarised audit trail; admin dual-trail; `--auto-receipt` synthesis in stdio + Python bridges |
 
 Pełen SI lifecycle smoke-tested: `initiate → message → buy-intent → pending_handoff → terminate` z SQLite audit trail.
 

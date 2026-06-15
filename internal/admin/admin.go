@@ -269,30 +269,48 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 }
 
 // sessionAuditView is the wire shape of GET /admin/api/sessions/:id/audit.
-// Mirrors Masse primitive #3 (audit trail at the reasoning boundary):
-// every fact needed for "was this answer influenced by paid context, and
-// in what way?" is in one JSON document — paying principal, influence
-// mode, ordered turn log with timestamps.
+// M6.3 dual-trail: every brand turn ships with the sponsored_context it
+// emitted (declared_context_use) plus the host's sponsored_context_
+// receipt that acknowledged it (accepted_status, accepted_use,
+// notary_jws). A mismatch row — accepted_use != declared_context_use,
+// or accepted_status == "rejected" — is the smoking-gun the spec's
+// audit-trail requirement is built around.
 type sessionAuditView struct {
-	SessionID       string             `json:"session_id"`
-	SessionStatus   string             `json:"session_status"`
-	BrandName       string             `json:"brand_name"`
-	BrandDomain     string             `json:"brand_domain"`
-	PayingPrincipal string             `json:"paying_principal,omitempty"`
-	InfluenceMode   string             `json:"influence_mode"`
-	OfferingID      string             `json:"offering_id,omitempty"`
-	Intent          string             `json:"intent,omitempty"`
-	ConsentGranted  bool               `json:"consent_granted"`
-	CreatedAt       string             `json:"created_at"`
-	UpdatedAt       string             `json:"updated_at"`
-	Turns           []sessionAuditTurn `json:"turns"`
+	SessionID           string                       `json:"session_id"`
+	SessionStatus       string                       `json:"session_status"`
+	BrandName           string                       `json:"brand_name"`
+	BrandDomain         string                       `json:"brand_domain"`
+	PayingPrincipalBrand string                      `json:"paying_principal_brand"`
+	DeclaredContextUse  string                       `json:"declared_context_use"`
+	OfferingID          string                       `json:"offering_id,omitempty"`
+	Intent              string                       `json:"intent,omitempty"`
+	ConsentGranted      bool                         `json:"consent_granted"`
+	CreatedAt           string                       `json:"created_at"`
+	UpdatedAt           string                       `json:"updated_at"`
+	Turns               []sessionAuditTurn           `json:"turns"`
+	PreSessionReceipt   *sessionAuditReceipt         `json:"pre_session_receipt,omitempty"`
 }
 
+// sessionAuditTurn folds the brand-emitted message with the host receipt
+// that acknowledged it (when one exists). The optional Receipt may also
+// carry a Mismatch flag the admin UI surfaces in red.
 type sessionAuditTurn struct {
-	Turn      int    `json:"turn"`
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	CreatedAt string `json:"created_at"`
+	Turn      int                  `json:"turn"`
+	Role      string               `json:"role"`
+	Content   string               `json:"content"`
+	CreatedAt string               `json:"created_at"`
+	Receipt   *sessionAuditReceipt `json:"receipt,omitempty"`
+}
+
+type sessionAuditReceipt struct {
+	Status          string `json:"status"`              // accepted | rejected
+	AcceptedUse     string `json:"accepted_use,omitempty"`
+	Synthesised     bool   `json:"synthesised"`         // true when the MCP bridge stamped it
+	NotaryJWS       string `json:"notary_jws,omitempty"`
+	NotaryAvailable bool   `json:"notary_available"`    // false when no signing key is wired
+	Mismatch        bool   `json:"mismatch,omitempty"`  // accepted use differs from declared use
+	ReceivedAt      string `json:"received_at"`
+	RejectionReason string `json:"rejection_reason,omitempty"`
 }
 
 func (h *Handler) sessionAudit(w http.ResponseWriter, r *http.Request, sid string) {
@@ -315,28 +333,66 @@ func (h *Handler) sessionAudit(w http.ResponseWriter, r *http.Request, sid strin
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	receipts, err := h.store.ListReceipts(ctx, sid)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	// Index receipts by turn for O(1) lookup as we render messages.
+	rcptByTurn := map[int]sessionAuditReceipt{}
+	var preSession *sessionAuditReceipt
+	for _, r := range receipts {
+		view := sessionAuditReceipt{
+			Status:          map[bool]string{true: "accepted", false: "rejected"}[r.Accepted],
+			AcceptedUse:     r.AcceptedUse,
+			Synthesised:     r.Synthesised,
+			NotaryJWS:       r.NotaryJWS,
+			NotaryAvailable: r.NotaryJWS != "",
+			ReceivedAt:      r.ReceivedAt.Format("2006-01-02T15:04:05.000Z07:00"),
+		}
+		if r.Accepted && r.AcceptedUse != "" && r.AcceptedUse != sess.InfluenceMode {
+			view.Mismatch = true
+		}
+		if r.Turn == -1 {
+			cp := view
+			preSession = &cp
+			continue
+		}
+		rcptByTurn[r.Turn] = view
+	}
+
 	turns := make([]sessionAuditTurn, 0, len(msgs))
 	for _, m := range msgs {
-		turns = append(turns, sessionAuditTurn{
+		row := sessionAuditTurn{
 			Turn:      m.Turn,
 			Role:      m.Role,
 			Content:   m.Content,
 			CreatedAt: m.CreatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
-		})
+		}
+		// Receipts are about brand turns — only brand rows carry one.
+		if m.Role == "brand" {
+			if rv, ok := rcptByTurn[m.Turn]; ok {
+				rcpt := rv
+				row.Receipt = &rcpt
+			}
+		}
+		turns = append(turns, row)
 	}
+
 	writeJSON(w, http.StatusOK, sessionAuditView{
-		SessionID:       sess.SessionID,
-		SessionStatus:   sess.SessionStatus,
-		BrandName:       h.cfg.Brand.Name,
-		BrandDomain:     h.cfg.Brand.Domain,
-		PayingPrincipal: h.cfg.Brand.PayingPrincipal,
-		InfluenceMode:   sess.InfluenceMode,
-		OfferingID:      sess.OfferingID,
-		Intent:          sess.Intent,
-		ConsentGranted:  sess.ConsentGranted,
-		CreatedAt:       sess.CreatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
-		UpdatedAt:       sess.UpdatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
-		Turns:           turns,
+		SessionID:            sess.SessionID,
+		SessionStatus:        sess.SessionStatus,
+		BrandName:            h.cfg.Brand.Name,
+		BrandDomain:          h.cfg.Brand.Domain,
+		PayingPrincipalBrand: h.cfg.Brand.Domain, // canonical identity per M6.3 envelope
+		DeclaredContextUse:   sess.InfluenceMode,
+		OfferingID:           sess.OfferingID,
+		Intent:               sess.Intent,
+		ConsentGranted:       sess.ConsentGranted,
+		CreatedAt:            sess.CreatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
+		UpdatedAt:            sess.UpdatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
+		Turns:                turns,
+		PreSessionReceipt:    preSession,
 	})
 }
 

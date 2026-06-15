@@ -40,18 +40,37 @@ type Brand struct {
 	Domain  string `toml:"domain"`
 	LogoURL string `toml:"logo_url"`
 	// SigningKeyPath is the on-disk Ed25519 keypair backing the
-	// verify_brand_claim signed_response envelope (M6.1). When empty the
-	// brand surface refuses to mint signed responses; verify_brand_claim
-	// returns an internal error so the operator sees the missing wire
-	// up. First boot with a populated path mints a fresh key.
+	// verify_brand_claim signed_response envelope (M6.1) AND the M6.3
+	// receipt-notarisation JWS. One key per brand identity — single
+	// trust story for any AdCP-side signature this brand emits. Empty
+	// disables both surfaces.
 	SigningKeyPath string `toml:"signing_key_path"`
-	// PayingPrincipal is the URL identifying who economically funds this
-	// agent's inference — the "who pays for the tokens" disclosure
-	// primitive (M6.2). Surfaced verbatim in /.well-known/brand.json and
-	// in get_adcp_capabilities so hosts (and downstream users) can render
-	// a "you are talking to a representative of X" trust badge. Defaults
-	// to https://<brand.domain> when empty.
-	PayingPrincipal string `toml:"paying_principal"`
+	// Disclosure (M6.3) is the default disclosure_obligation bragent
+	// stamps onto every emitted sponsored_context envelope. When the
+	// section is omitted the defaults applied are: required=false,
+	// label_text="Sponsored by <Brand.Name>", timing=at_first_influenced_output,
+	// proximity=near_influenced_output, jurisdictions=[]. Operators opt
+	// into legal exposure by listing jurisdictions explicitly — we do
+	// not ship FTC/DSA codes as defaults.
+	Disclosure DisclosureConfig `toml:"disclosure"`
+}
+
+// DisclosureConfig is the TOML shape for [brand.disclosure]. Mirrors
+// si.DisclosureObligation with strings only (no nested struct types in
+// TOML) — the SI handler builds the runtime struct from this on every
+// sponsored_context emission.
+type DisclosureConfig struct {
+	Required      bool                          `toml:"required"`
+	LabelText     string                        `toml:"label_text"`
+	Timing        string                        `toml:"timing"`
+	Proximity     string                        `toml:"proximity"`
+	Jurisdictions []DisclosureJurisdictionConfig `toml:"jurisdictions"`
+}
+
+type DisclosureJurisdictionConfig struct {
+	Country    string `toml:"country"`
+	Region     string `toml:"region"`
+	Regulation string `toml:"regulation"`
 }
 
 type Server struct {
@@ -103,9 +122,6 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if v := os.Getenv("BRAGENT_BRAND_DOMAIN"); v != "" {
 		c.Brand.Domain = v
-	}
-	if v := os.Getenv("BRAGENT_BRAND_PAYING_PRINCIPAL"); v != "" {
-		c.Brand.PayingPrincipal = v
 	}
 	if v := os.Getenv("BRAGENT_BRAND_SIGNING_KEY_PATH"); v != "" {
 		c.Brand.SigningKeyPath = v
@@ -159,12 +175,20 @@ func (c *Config) applyDefaultsAndValidate() error {
 	if c.Store.Path == "" {
 		c.Store.Path = ".cache/bragent.db"
 	}
-	// Default paying_principal to https://<brand.domain> — the canonical
-	// case is that the brand pays for its own agent's inference. Operators
-	// who run a third-party SI surface override this with the actual
-	// economic principal's URL (e.g., a hosting agency).
-	if c.Brand.PayingPrincipal == "" && c.Brand.Domain != "" {
-		c.Brand.PayingPrincipal = "https://" + c.Brand.Domain
+	// M6.3 disclosure defaults — operator can override any field in
+	// [brand.disclosure]; absence means "ship the sensible default" and
+	// not "ship an empty string". We don't validate timing/proximity
+	// against the spec enum here — the SI handler does that on emission
+	// so config typos surface at boot via the smoke loop rather than
+	// silently producing invalid envelopes.
+	if c.Brand.Disclosure.LabelText == "" {
+		c.Brand.Disclosure.LabelText = "Sponsored by " + c.Brand.Name
+	}
+	if c.Brand.Disclosure.Timing == "" {
+		c.Brand.Disclosure.Timing = "at_first_influenced_output"
+	}
+	if c.Brand.Disclosure.Proximity == "" {
+		c.Brand.Disclosure.Proximity = "near_influenced_output"
 	}
 	// signing_key_path stays empty by default — operators opt in to
 	// brand-rights signing by setting it. Empty → verify_brand_claim is

@@ -50,11 +50,12 @@ func (h *Handler) JWKSJSON() map[string]any {
 // leave editorial-rich data (logo, taglines, social) to the operator's
 // own brand.json on the brand's primary domain.
 //
-// paying_principal is M6.2's economic disclosure primitive: the URL of
-// the party economically responsible for this agent's inference. Buyer
-// agents and end-user surfaces can render "paid for by <principal>"
-// without needing to crawl billing or invoice records. Mapped to FTC
-// "material connection" doctrine and EU DSA Art. 26.
+// Note (M6.3): the M6.2-era `paying_principal` flat URL on brand.json
+// was removed. The economic-accountability fact now lives exclusively
+// in the nested `sponsored_context.paying_principal` envelope emitted
+// on every SI response, per AdCP 3.1.0-rc.14 PR #5501. brand.json
+// stays a thin discovery surface — buyer agents fetch it once for
+// identity, then negotiate accountability per-session over /mcp.
 func (h *Handler) BrandJSON() map[string]any {
 	out := map[string]any{
 		"$schema":     "https://agenticadvertising.org/schemas/v1/brand.json",
@@ -64,9 +65,6 @@ func (h *Handler) BrandJSON() map[string]any {
 	}
 	if h.cfg.Brand.LogoURL != "" {
 		out["logo_url"] = h.cfg.Brand.LogoURL
-	}
-	if h.cfg.Brand.PayingPrincipal != "" {
-		out["paying_principal"] = h.cfg.Brand.PayingPrincipal
 	}
 	return out
 }
@@ -120,7 +118,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) IndexHTML() string {
 	brandName := htmlEscape(h.cfg.Brand.Name)
 	brandDomain := htmlEscape(h.cfg.Brand.Domain)
-	principal := htmlEscape(h.cfg.Brand.PayingPrincipal)
+	// M6.3: paying_principal lives in the per-response sponsored_context
+	// envelope. For the landing page we render the brand domain as the
+	// economic-principal label — every SI response will carry the full
+	// {brand:{domain}, display_name, ...} envelope on the wire.
+	principal := htmlEscape(h.cfg.Brand.Name + " (" + h.cfg.Brand.Domain + ")")
 	mcpURL := "https://" + brandDomain + "/mcp"
 	return `<!doctype html>
 <html lang="en">

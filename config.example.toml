@@ -4,19 +4,36 @@
 name = "Acme Outdoor"
 domain = "shop.acme-outdoor.example"
 logo_url = "https://shop.acme-outdoor.example/logo.png"
-# Opt in to brand-rights signing (M6.1). When set, bragent registers
-# verify_brand_claim in capabilities and publishes its public key at
-# /.well-known/jwks.json. The first boot mints an Ed25519 keypair at
-# this path with mode 0600. Leave empty to disable.
+# Opt in to brand-rights signing (M6.1) AND M6.3 receipt notarisation.
+# When set, bragent registers verify_brand_claim in capabilities,
+# publishes its public key at /.well-known/jwks.json, AND uses the same
+# Ed25519 key to JWS-sign every sponsored_context_receipt it persists —
+# so the audit trail is cryptographically attestable, not just two
+# unsigned JSON blobs (Ghost's M6.3 veto on unsigned audit). First boot
+# mints a fresh keypair at this path with mode 0600. Leave empty to
+# disable both surfaces; receipts persist unsigned in that case.
 signing_key_path = ".cache/signing.ed25519"
-# Economic principal disclosure (M6.2). URL identifying who pays for this
-# agent's inference — surfaced in /.well-known/brand.json, in
-# get_adcp_capabilities, and on every si_initiate_session response so
-# hosts can render a "paid for by X" trust badge without crawling
-# billing records. Defaults to https://<domain> when empty. Override if
-# the brand runs on a third-party SI surface where a different entity
-# (e.g., a hosting agency) is the paying principal.
-paying_principal = ""
+
+# M6.3 disclosure obligation defaults stamped onto every emitted
+# sponsored_context envelope (AdCP 3.1.0-rc.14 §Sponsored Context
+# Accountability). Omit the section entirely to ship sensible defaults
+# (required=false, label_text="Sponsored by <name>",
+# timing=at_first_influenced_output, proximity=near_influenced_output,
+# jurisdictions=[]).
+#
+# A host that receives a sponsored_context with required=true MUST
+# either accept and commit to render the disclosure (label_text) or
+# reject the context entirely — silent down-scoping is forbidden by
+# spec and bragent enforces it on incoming receipts.
+[brand.disclosure]
+required = false
+# label_text = "Sponsored by Acme Outdoor"
+# timing = "at_first_influenced_output"
+# proximity = "near_influenced_output"
+# jurisdictions = [
+#   { country = "US", regulation = "FTC-16-CFR-Part-255" },
+#   { country = "DE", regulation = "EU-DSA-Art-26" },
+# ]
 
 [server]
 listen = ":8080"

@@ -46,6 +46,7 @@ func main() {
 	simulateHost := flag.Bool("simulate-host", false, "after boot, issue a localhost si_initiate_session against ourselves and log the wire response, then exit. Useful for CI smoke and offline testing when no real SI host is available.")
 	showVersion := flag.Bool("version", false, "print bragent version and exit")
 	mcpStdio := flag.Bool("mcp-stdio", false, "speak Anthropic MCP over stdin/stdout instead of running the HTTP server. Wires the same SI handlers behind MCP tools so Claude Desktop (and other MCP hosts that launch via stdio) can converse with this brand agent. All logging is redirected to stderr to keep stdout clean for the JSON-RPC stream.")
+	autoReceipt := flag.String("auto-receipt", "accept-presentation", "(--mcp-stdio only) sponsored_context_receipt synthesis policy: accept-presentation (default — accept only declared presentation_only, reject the richer modes), accept-all (accept any declared context_use), reject-all (always reject; useful for stress-testing the audit-mismatch path), null (never synthesise). Synthesised receipts are marked host_surface=\"bridge-synthesized\" in the audit trail.")
 	flag.Parse()
 
 	if *showVersion {
@@ -111,6 +112,9 @@ func main() {
 			log.Fatalf("brand signing key: %v", err)
 		}
 		handlers.WithBrand(brand.NewHandler(cfg.Brand, signer, nil))
+		// M6.3 — same key is used to notarise sponsored_context_receipt
+		// rows. One trust story per brand identity.
+		handlers.WithSigner(signer)
 		wk.WithSigner(signer)
 		brandState = "kid=" + signer.KeyID()
 	}
@@ -120,9 +124,10 @@ func main() {
 	// the transport. Returns when stdin closes (Claude Desktop closing
 	// the pipe) or on SIGINT/SIGTERM via ctx.
 	if *mcpStdio {
-		log.Printf("bragent mcp-stdio brand=%q domain=%s products=%d store=%s llm=%s paying_principal=%s",
-			cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, cfg.Brand.PayingPrincipal)
-		if err := mcpstdio.New(handlers).Run(ctx); err != nil && err != context.Canceled {
+		log.Printf("bragent mcp-stdio brand=%q domain=%s products=%d store=%s llm=%s disclosure_required=%t auto_receipt=%s",
+			cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, cfg.Brand.Disclosure.Required, *autoReceipt)
+		srv := mcpstdio.New(handlers).WithAutoReceipt(mcpstdio.AutoReceiptMode(*autoReceipt))
+		if err := srv.Run(ctx); err != nil && err != context.Canceled {
 			log.Fatalf("mcp-stdio: %v", err)
 		}
 		return
@@ -136,8 +141,8 @@ func main() {
 		adminState = "on"
 	}
 
-	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s llm=%s admin=%s brand_rights=%s paying_principal=%s",
-		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, adminState, brandState, cfg.Brand.PayingPrincipal)
+	log.Printf("bragent listening listen=%s brand=%q domain=%s products=%d store=%s llm=%s admin=%s brand_rights=%s disclosure_required=%t",
+		cfg.Server.Listen, cfg.Brand.Name, cfg.Brand.Domain, catalog.Size(), cfg.Store.Path, providerName, adminState, brandState, cfg.Brand.Disclosure.Required)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Run(ctx) }()

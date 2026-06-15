@@ -80,6 +80,38 @@ func (s *Signer) SignVerifyBrandClaim(brandDomain, agentURL string, canonicalReq
 	}, nil
 }
 
+// SignReceiptNotary mints a JWS over an opaque notary payload — used
+// by M6.3 receipt persistence to record "bragent received this
+// sponsored_context_receipt at T with content hash H, signed by
+// bragent-key". Unlike SignVerifyBrandClaim this is not a
+// task-response signature: there is no AdCP request to bind to and no
+// designated-task profile. The protected header is therefore
+// brand-specific (`adcp-bragent-receipt-notary+jws`) so verifiers
+// don't accidentally treat it as an interop signature on a spec task.
+//
+// Returns the compact JWS string `header.payload.signature` ready to
+// stash in store.Receipt.NotaryJWS.
+func (s *Signer) SignReceiptNotary(payload any) (string, error) {
+	payloadCanonical, err := Canonicalize(payload)
+	if err != nil {
+		return "", fmt.Errorf("notary: canonicalize payload: %w", err)
+	}
+	header := map[string]any{
+		"alg": "EdDSA",
+		"kid": s.kid,
+		"typ": "adcp-bragent-receipt-notary+jws",
+	}
+	headerCanonical, err := Canonicalize(header)
+	if err != nil {
+		return "", fmt.Errorf("notary: canonicalize header: %w", err)
+	}
+	protected := base64.RawURLEncoding.EncodeToString(headerCanonical)
+	payloadEnc := base64.RawURLEncoding.EncodeToString(payloadCanonical)
+	signingInput := protected + "." + payloadEnc
+	sig := ed25519.Sign(s.priv, []byte(signingInput))
+	return protected + "." + payloadEnc + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
 // VerifyEnvelope re-derives the JWS signing input from a received
 // Envelope and checks the signature against pub. Used in tests and any
 // future cross-implementation conformance check.

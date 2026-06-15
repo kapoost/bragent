@@ -4,6 +4,36 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+)
+
+// AutoReceiptMode controls how the bridge synthesises
+// sponsored_context_receipt on outgoing si_initiate_session and
+// si_send_message requests when running between a non-SI-aware host
+// (Claude Desktop) and the bragent backend. The narada (M6.3) called
+// this a per-bridge flag so the audit log can distinguish synthesised
+// receipts from real host receipts via host_surface="bridge-synthesized".
+//
+//   - AutoReceiptAcceptPresentation (default): synthesise an "accepted"
+//     receipt only when the prior brand response declared
+//     context_use=presentation_only; reject otherwise. Mirrors the spec
+//     posture that a host that cannot honour the declared use mode MUST
+//     reject rather than down-scope.
+//   - AutoReceiptAcceptAll: synthesise an "accepted" receipt for every
+//     context_use the brand declared. Useful for demos where you want
+//     the dual-trail visible regardless of mode.
+//   - AutoReceiptRejectAll: always synthesise a "rejected" receipt.
+//     Useful for stress-testing the audit-mismatch path.
+//   - AutoReceiptOff: never synthesise. Receipts only flow when an
+//     actual MCP client sends one — for our stdio flow that means
+//     never, since Claude Desktop doesn't speak SI.
+type AutoReceiptMode string
+
+const (
+	AutoReceiptAcceptPresentation AutoReceiptMode = "accept-presentation"
+	AutoReceiptAcceptAll          AutoReceiptMode = "accept-all"
+	AutoReceiptRejectAll          AutoReceiptMode = "reject-all"
+	AutoReceiptOff                AutoReceiptMode = "null"
 )
 
 // initialize returns the standard MCP server handshake response.
@@ -22,7 +52,8 @@ func (s *Server) handleInitialize(req rpcRequest) (any, *rpcError) {
 		"instructions": "Brand-agent bridge over AdCP Sponsored Intelligence. " +
 			"Call si_get_offering to preview the catalog, then si_initiate_session " +
 			"to open a conversation, then si_send_message for each turn. The bridge " +
-			"remembers the active session_id so you don't need to thread it.",
+			"remembers the active session_id and synthesises sponsored_context_receipt " +
+			"on each turn per the configured --auto-receipt policy.",
 	}, nil
 }
 
@@ -46,8 +77,9 @@ func (s *Server) tools() []toolDef {
 		{
 			Name: "si_get_offering",
 			Description: "Preview the brand's catalog. Returns matching offerings with title, " +
-				"description, price, availability_status. Use before si_initiate_session to surface " +
-				"what the brand has.",
+				"description, price, availability_status, plus a sponsored_context envelope " +
+				"declaring paying_principal, context_use, and disclosure_obligation per AdCP " +
+				"3.1.0-rc.14.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -59,29 +91,25 @@ func (s *Server) tools() []toolDef {
 		{
 			Name: "si_initiate_session",
 			Description: "Open a brand-agent conversation. Returns session_id (remembered by the " +
-				"bridge), the agent's welcome message, paying_principal (the entity that funds this " +
-				"agent's inference — M6.2 disclosure), and the negotiated influence_mode. Call once " +
-				"at the start of a brand interaction.",
+				"bridge), the welcome message, and a sponsored_context envelope with the brand's " +
+				"paying_principal and disclosure_obligation. The bridge will auto-synthesise a " +
+				"sponsored_context_receipt on the NEXT si_send_message per its --auto-receipt policy.",
 			InputSchema: map[string]any{
 				"type":     "object",
 				"required": []string{"intent"},
 				"properties": map[string]any{
 					"intent":      stringProp("User's natural-language intent"),
 					"offering_id": stringProp("Optional — specific product the user is interested in"),
-					"influence_mode": map[string]any{
-						"type":        "string",
-						"enum":        []string{"presentation_only", "reasoning_context", "comparison_set"},
-						"default":     "presentation_only",
-						"description": "How this session's outputs may participate in the host's reasoning (M6.2)",
-					},
 				},
 			},
 		},
 		{
 			Name: "si_send_message",
-			Description: "Continue the active brand-agent conversation. Uses the session_id remembered " +
-				"by the bridge. Returns the brand's reply, session_status, and a handoff URL when the " +
-				"brand signals pending_handoff.",
+			Description: "Continue the active brand-agent conversation. The bridge synthesises a " +
+				"sponsored_context_receipt for the prior brand turn (if --auto-receipt is on) and " +
+				"attaches it to the request, then returns the brand's reply plus a fresh " +
+				"sponsored_context envelope. A handoff URL appears in the response when the brand " +
+				"transitions to pending_handoff.",
 			InputSchema: map[string]any{
 				"type":     "object",
 				"required": []string{"message"},
@@ -133,7 +161,9 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) (any, *rpc
 		return toolError(rpcErr.Message), nil
 	}
 
-	// Side-effects on bridge state. Done after success only so a failed
+	// Side-effects on bridge state: cache session_id and the freshly
+	// emitted sponsored_context so the next outgoing request can carry a
+	// synthesised receipt for it. Done after success only so a failed
 	// si_initiate_session doesn't poison the session pointer.
 	s.updateState(call.Name, result)
 
@@ -158,8 +188,7 @@ func toolError(msg string) map[string]any {
 }
 
 // mapTool translates the MCP tool name + arguments into the AdCP
-// (method, params) pair the underlying handler expects. Centralised so
-// adding a new tool doesn't require touching the dispatch.
+// (method, params) pair the underlying handler expects.
 func (s *Server) mapTool(name string, args map[string]any) (string, json.RawMessage, error) {
 	switch name {
 	case "si_get_offering":
@@ -187,8 +216,11 @@ func (s *Server) mapTool(name string, args map[string]any) (string, json.RawMess
 		if v := str(args, "offering_id"); v != "" {
 			out["offering_id"] = v
 		}
-		if v := str(args, "influence_mode"); v != "" {
-			out["influence_mode"] = v
+		// Attach a synthesised receipt for the prior si_get_offering if
+		// the bridge has one cached. This populates the spec's
+		// "pre-session receipt" slot — turn = -1 server-side.
+		if receipt := s.state.takePending(); receipt != nil {
+			out["sponsored_context_receipt"] = receipt
 		}
 		return "si_initiate_session", mustJSON(out), nil
 
@@ -201,10 +233,15 @@ func (s *Server) mapTool(name string, args map[string]any) (string, json.RawMess
 		if msg == "" {
 			return "", nil, fmt.Errorf("message required")
 		}
-		return "si_send_message", mustJSON(map[string]any{
+		out := map[string]any{
 			"session_id": sid,
 			"message":    msg,
-		}), nil
+		}
+		// Attach a synthesised receipt for the prior brand turn.
+		if receipt := s.state.takePending(); receipt != nil {
+			out["sponsored_context_receipt"] = receipt
+		}
+		return "si_send_message", mustJSON(out), nil
 
 	case "si_terminate_session":
 		sid := s.state.get()
@@ -221,16 +258,16 @@ func (s *Server) mapTool(name string, args map[string]any) (string, json.RawMess
 	}
 }
 
-// updateState handles the side-effect of caching session_id between
-// stdio tool calls. Mirror of the Python bridge's _state dict but in
-// Go and protected by a mutex.
+// updateState handles the side-effects of caching session_id between
+// stdio tool calls AND of stamping a synthesised sponsored_context_
+// receipt for the just-received sponsored_context so the next outgoing
+// request can carry it. Receipts are NOT synthesised when --auto-receipt
+// is off, OR when the response had no sponsored_context envelope.
 func (s *Server) updateState(name string, result any) {
+	// Round-trip through JSON to a generic map so the field lookups
+	// stay tool-name-agnostic and we don't have to import internal/si.
 	m, ok := result.(map[string]any)
 	if !ok {
-		// si.Handlers return typed structs — round-trip through JSON
-		// to a generic map so the field lookups below stay tool-name-
-		// agnostic. Cheap (these structs are tiny) and keeps mcpstdio
-		// from importing internal/si types.
 		b, err := json.Marshal(result)
 		if err != nil {
 			return
@@ -238,18 +275,72 @@ func (s *Server) updateState(name string, result any) {
 		m = map[string]any{}
 		_ = json.Unmarshal(b, &m)
 	}
-	switch name {
-	case "si_initiate_session":
+	if name == "si_initiate_session" {
 		if sid, ok := m["session_id"].(string); ok && sid != "" {
 			s.state.set(sid)
 		}
-	case "si_send_message":
+	}
+	if name == "si_send_message" {
 		if status, _ := m["session_status"].(string); status == "terminated" {
 			s.state.set("")
 		}
-	case "si_terminate_session":
+	}
+	if name == "si_terminate_session" {
 		s.state.set("")
 	}
+	// Cache the sponsored_context for the next outgoing receipt.
+	if sc, ok := m["sponsored_context"].(map[string]any); ok && s.autoReceipt != AutoReceiptOff {
+		s.state.setPending(s.synthesiseReceipt(sc))
+	}
+}
+
+// synthesiseReceipt builds a sponsored_context_receipt from a freshly
+// emitted sponsored_context and the configured AutoReceiptMode. The
+// receipt always marks host_surface="bridge-synthesized" so the audit
+// trail can distinguish bridge synthesis from real host receipts.
+func (s *Server) synthesiseReceipt(sponsored map[string]any) map[string]any {
+	declaredUse, _ := sponsored["context_use"].(string)
+	obligation, _ := sponsored["disclosure_obligation"].(map[string]any)
+	disclosureRequired := false
+	if b, ok := obligation["required"].(bool); ok {
+		disclosureRequired = b
+	}
+
+	accept := false
+	switch s.autoReceipt {
+	case AutoReceiptAcceptAll:
+		accept = true
+	case AutoReceiptRejectAll:
+		accept = false
+	case AutoReceiptAcceptPresentation:
+		accept = declaredUse == "presentation_only"
+	}
+
+	receipt := map[string]any{
+		"sponsored_context": sponsored,
+		"host_receipt": map[string]any{
+			"status":       map[bool]string{true: "accepted", false: "rejected"}[accept],
+			"received_at":  time.Now().UTC().Format(time.RFC3339),
+			"host_surface": "bridge-synthesized",
+		},
+	}
+	hr := receipt["host_receipt"].(map[string]any)
+	if accept {
+		hr["accepted_context_use"] = declaredUse
+		commit := map[string]any{}
+		if disclosureRequired {
+			commit["status"] = "accepted"
+			if label, ok := obligation["label_text"].(string); ok {
+				commit["label_text"] = label
+			}
+		} else {
+			commit["status"] = "not_required"
+		}
+		hr["disclosure_commitment"] = commit
+	} else {
+		hr["rejection_reason"] = fmt.Sprintf("bridge --auto-receipt=%s does not accept context_use=%s", s.autoReceipt, declaredUse)
+	}
+	return receipt
 }
 
 func str(args map[string]any, key string) string {

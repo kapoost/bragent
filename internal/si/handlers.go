@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/kapoost/bragent/internal/brand"
 	"github.com/kapoost/bragent/internal/config"
 	"github.com/kapoost/bragent/internal/feed"
 	"github.com/kapoost/bragent/internal/llm"
 	"github.com/kapoost/bragent/internal/mcp"
+	"github.com/kapoost/bragent/internal/signing"
 	"github.com/kapoost/bragent/internal/store"
 )
 
@@ -20,11 +22,21 @@ type Handlers struct {
 	catalog *feed.Catalog
 	store   *store.Store
 	llm     llm.Provider
-	brand   *brand.Handler // optional — wired when [brand].signing_key_path is set
+	brand   *brand.Handler  // optional — wired when [brand].signing_key_path is set
+	signer  *signing.Signer // optional — same key as brand; used to notarise receipts (M6.3)
 }
 
 func NewHandlers(cfg *config.Config, catalog *feed.Catalog, st *store.Store, provider llm.Provider) *Handlers {
 	return &Handlers{cfg: cfg, catalog: catalog, store: st, llm: provider}
+}
+
+// WithSigner attaches the receipt-notarisation signer. Same Ed25519 key
+// used by M6.1 verify_brand_claim; one trust story per brand identity.
+// Optional — without it, receipts are stored unsigned and admin audit
+// flags them as un-notarised.
+func (h *Handlers) WithSigner(s *signing.Signer) *Handlers {
+	h.signer = s
+	return h
 }
 
 // WithBrand attaches the brand-protocol surface (M6.1). Off when nil —
@@ -88,14 +100,61 @@ func (h *Handlers) capabilities() CapabilitiesResponse {
 		Capabilities:       tools,
 		AgentName:          h.cfg.Brand.Name,
 		AgentURL:           fmt.Sprintf("https://%s/mcp", h.cfg.Brand.Domain),
-		// M6.2 — economic disclosure + influence-mode advertise. Hosts
-		// that don't know the field ignore it; hosts that do can render
-		// a "paid for by X" trust badge from the capabilities response
-		// alone, without a second /.well-known/brand.json fetch.
-		PayingPrincipal:         h.cfg.Brand.PayingPrincipal,
-		InfluenceModesSupported: SupportedInfluenceModes,
+		// M6.3: capabilities goes back to being a thin discovery surface.
+		// The M6.2-era PayingPrincipal + InfluenceModesSupported extension
+		// fields are gone — sponsored_context now travels in every SI
+		// response envelope, so hosts learn accountability per-turn
+		// instead of pre-negotiating it on capabilities.
 	}
 }
+
+// buildSponsoredContext composes the M6.3 sponsored_context envelope
+// for a given outgoing response. ContextUse is the per-emission
+// declaration — getOffering and the initial welcome are
+// presentation_only by default (the wire shape suggests "render as a
+// labeled card, do not fold into reasoning"); send_message responses
+// where bragent has already promoted to pending_handoff stay
+// presentation_only too since the handoff URL is the rendered unit.
+//
+// In a future revision we can let the LLM provider hint a different
+// use mode (e.g., reasoning_context when the brand wants the host
+// model to factor the answer into a comparison). For now, conservative
+// default: presentation_only. The audit trail will show every emission.
+func (h *Handlers) buildSponsoredContext(ctx ContextUse) *SponsoredContext {
+	if !ctx.IsValid() {
+		ctx = ContextUsePresentationOnly
+	}
+	dcfg := h.cfg.Brand.Disclosure
+	juris := make([]DisclosureJurisdiction, 0, len(dcfg.Jurisdictions))
+	for _, j := range dcfg.Jurisdictions {
+		juris = append(juris, DisclosureJurisdiction{
+			Country:    j.Country,
+			Region:     j.Region,
+			Regulation: j.Regulation,
+		})
+	}
+	return &SponsoredContext{
+		PayingPrincipal: PayingPrincipal{
+			Brand:       BrandRef{Domain: h.cfg.Brand.Domain},
+			DisplayName: h.cfg.Brand.Name,
+		},
+		ContextUse: ctx,
+		DisclosureObligation: DisclosureObligation{
+			Required:      dcfg.Required,
+			LabelText:     dcfg.LabelText,
+			Timing:        dcfg.Timing,
+			Proximity:     dcfg.Proximity,
+			Jurisdictions: juris,
+		},
+		DeclaredAt: nowRFC3339(),
+		DeclaredBy: &DeclaredBy{
+			AgentURL: fmt.Sprintf("https://%s/mcp", h.cfg.Brand.Domain),
+			Role:     "brand_agent",
+		},
+	}
+}
+
+func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 
 func (h *Handlers) getOffering(_ context.Context, params json.RawMessage) (any, *mcp.Error) {
 	var req OfferingPreviewRequest
@@ -142,9 +201,20 @@ func (h *Handlers) getOffering(_ context.Context, params json.RawMessage) (any, 
 			"This preview represents %s based on their published product feed. Final price and availability are confirmed only on %s.",
 			h.cfg.Brand.Name, h.cfg.Brand.Domain,
 		),
-		Context: req.Context,
+		// M6.3 — getOffering surfaces a sponsored_context envelope. The
+		// returned offerings/matching_products are sponsored content
+		// entering the host boundary; the declaration applies to the
+		// package as a whole per spec rc.14 §Sponsored Context Accountability.
+		SponsoredContext: h.buildSponsoredContext(ContextUsePresentationOnly),
+		Context:          req.Context,
 	}, nil
 }
+
+// silence linter on the time import: rand+hex are used by randomToken,
+// but `time` is used inside handlers.go only via buildSponsoredContext
+// → nowRFC3339. Defensive guard so future refactors don't drop the
+// import without noticing.
+var _ = time.RFC3339
 
 // availabilityFromFeed maps the boolean feed flag to the spec
 // availability_status enum. Conservative defaults: a present, in-stock

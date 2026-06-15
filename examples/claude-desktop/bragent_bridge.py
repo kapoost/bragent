@@ -36,6 +36,15 @@ BRAGENT_URL = os.getenv("BRAGENT_URL", "https://bragent-demo.fly.dev/mcp")
 SERVER_NAME = os.getenv("BRAGENT_SERVER_NAME", "acme-brand-agent")
 HTTP_TIMEOUT = float(os.getenv("BRAGENT_HTTP_TIMEOUT", "30"))
 
+# M6.3 — sponsored_context_receipt synthesis policy. Same modes as the
+# native --mcp-stdio --auto-receipt flag:
+#   accept-presentation (default): accept only declared presentation_only,
+#                                  reject the richer modes
+#   accept-all:    accept whatever was declared
+#   reject-all:    always reject; useful for testing the audit-mismatch path
+#   null:          never synthesise
+AUTO_RECEIPT = os.getenv("BRAGENT_AUTO_RECEIPT", "accept-presentation")
+
 # stderr-only logging so we don't pollute the stdio JSON-RPC stream.
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("bragent-bridge")
@@ -46,7 +55,7 @@ app = Server(SERVER_NAME)
 # configured MCP server, so this holds the active SI session for the
 # user's current conversation. A `si_terminate_session` clears it; a
 # second `si_initiate_session` replaces it.
-_state: dict[str, str | None] = {"session_id": None}
+_state: dict[str, object] = {"session_id": None, "pending_receipt": None}
 
 
 async def call_bragent(method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -61,7 +70,62 @@ async def call_bragent(method: str, params: dict[str, Any]) -> dict[str, Any]:
     if "error" in body and body["error"]:
         err = body["error"]
         raise RuntimeError(f"bragent error {err.get('code')}: {err.get('message')}")
-    return body.get("result", {})
+    result = body.get("result", {})
+    # M6.3 — cache the sponsored_context from the response so the next
+    # outgoing request can carry a synthesised receipt for it.
+    sponsored = result.get("sponsored_context")
+    if sponsored and AUTO_RECEIPT != "null":
+        _state["pending_receipt"] = _synthesise_receipt(sponsored)
+    return result
+
+
+def _synthesise_receipt(sponsored: dict[str, Any]) -> dict[str, Any]:
+    """Build a sponsored_context_receipt from a freshly-emitted brand
+    sponsored_context envelope per the configured AUTO_RECEIPT policy.
+    The receipt is marked host_surface='bridge-synthesized' so bragent's
+    audit trail can distinguish synthesised receipts from real host
+    receipts coming from an SI-aware MCP host."""
+    declared_use = sponsored.get("context_use", "")
+    obligation = sponsored.get("disclosure_obligation", {}) or {}
+    disclosure_required = bool(obligation.get("required"))
+
+    if AUTO_RECEIPT == "accept-all":
+        accept = True
+    elif AUTO_RECEIPT == "reject-all":
+        accept = False
+    else:  # accept-presentation (default)
+        accept = declared_use == "presentation_only"
+
+    host_receipt: dict[str, Any] = {
+        "status": "accepted" if accept else "rejected",
+        "received_at": _now_iso(),
+        "host_surface": "bridge-synthesized",
+    }
+    if accept:
+        host_receipt["accepted_context_use"] = declared_use
+        if disclosure_required:
+            commit: dict[str, Any] = {"status": "accepted"}
+            if "label_text" in obligation:
+                commit["label_text"] = obligation["label_text"]
+            host_receipt["disclosure_commitment"] = commit
+        else:
+            host_receipt["disclosure_commitment"] = {"status": "not_required"}
+    else:
+        host_receipt["rejection_reason"] = (
+            f"bridge AUTO_RECEIPT={AUTO_RECEIPT} does not accept context_use={declared_use!r}"
+        )
+    return {"sponsored_context": sponsored, "host_receipt": host_receipt}
+
+
+def _now_iso() -> str:
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _take_pending_receipt() -> dict[str, Any] | None:
+    r = _state.get("pending_receipt")
+    _state["pending_receipt"] = None
+    return r  # type: ignore[return-value]
 
 
 @app.list_tools()
@@ -85,11 +149,14 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="si_initiate_session",
             description=(
-                "Open a brand-agent conversation. Returns a session_id "
-                "(automatically remembered for the session by this bridge), "
-                "the agent's welcome message, the paying_principal (who "
-                "funds this agent), and the negotiated influence_mode. "
-                "Call once at the start of a brand interaction."
+                "Open a brand-agent conversation. Returns session_id (auto-"
+                "remembered by the bridge), the welcome message, and a "
+                "sponsored_context envelope declaring paying_principal, "
+                "context_use, and disclosure_obligation per AdCP "
+                "3.1.0-rc.14. The bridge synthesises a "
+                "sponsored_context_receipt for the prior si_get_offering "
+                "(if any) and attaches it per the BRAGENT_AUTO_RECEIPT "
+                "policy."
             ),
             inputSchema={
                 "type": "object",
@@ -97,12 +164,6 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "intent": {"type": "string", "description": "User's natural-language intent"},
                     "offering_id": {"type": "string", "description": "Optional — specific product the user is interested in"},
-                    "influence_mode": {
-                        "type": "string",
-                        "enum": ["presentation_only", "reasoning_context", "comparison_set"],
-                        "default": "presentation_only",
-                        "description": "How this session's outputs may participate in the host's reasoning (M6.2)",
-                    },
                 },
             },
         ),
@@ -158,7 +219,6 @@ async def dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "si_initiate_session":
         params: dict[str, Any] = {
             "intent": args["intent"],
-            "influence_mode": args.get("influence_mode", "presentation_only"),
             "identity": {
                 "consent_granted": True,
                 "user_pseudo_id": "claude-desktop-bridge",
@@ -167,6 +227,11 @@ async def dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         }
         if "offering_id" in args:
             params["offering_id"] = args["offering_id"]
+        # Carry the synthesised receipt for the prior si_get_offering
+        # (turn = -1 server-side) if the bridge has one cached.
+        receipt = _take_pending_receipt()
+        if receipt:
+            params["sponsored_context_receipt"] = receipt
         result = await call_bragent("si_initiate_session", params)
         _state["session_id"] = result.get("session_id")
         log.info("session opened: %s", _state["session_id"])
@@ -176,12 +241,18 @@ async def dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         sid = _state["session_id"]
         if not sid:
             raise RuntimeError("no active session — call si_initiate_session first")
-        result = await call_bragent("si_send_message", {
+        params = {
             "session_id": sid,
             "message": args["message"],
-        })
+        }
+        # Carry the synthesised receipt for the prior brand turn.
+        receipt = _take_pending_receipt()
+        if receipt:
+            params["sponsored_context_receipt"] = receipt
+        result = await call_bragent("si_send_message", params)
         if result.get("session_status") == "terminated":
             _state["session_id"] = None
+            _state["pending_receipt"] = None
         return result
 
     if name == "si_terminate_session":
@@ -193,6 +264,7 @@ async def dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
             "reason": args.get("reason", "user_exit"),
         })
         _state["session_id"] = None
+        _state["pending_receipt"] = None
         return result
 
     raise RuntimeError(f"unknown tool: {name}")

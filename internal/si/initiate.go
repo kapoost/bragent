@@ -3,19 +3,29 @@ package si
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
+	"time"
 
 	"github.com/kapoost/bragent/internal/mcp"
 	"github.com/kapoost/bragent/internal/store"
 )
 
-// initiateSession opens a multi-turn conversation between the host's user
-// and this brand agent. The first turn is a deterministic welcome message —
-// the model-generated turns happen in si_send_message (M3 territory). M2
-// proves the lifecycle: persistent session row, message log, session_id
-// that subsequent calls can pin to.
+// initiateSession opens a multi-turn conversation. M6.3 wires three
+// new responsibilities on top of the M2/M3 lifecycle:
+//
+//  1. The session emits a sponsored_context envelope on the welcome
+//     turn (every brand-agent response is sponsored content).
+//  2. If the host carries a sponsored_context_receipt for the
+//     pre-session si_get_offering it acknowledged, we validate it
+//     against the spec's allOf constraints, notarise the JSON, and
+//     persist it with turn = -1 (the "pre-session" sentinel).
+//  3. The session row keeps an `influence_mode` column (DB artifact
+//     name) populated with the ContextUse we emitted — so the audit
+//     trail joins cleanly across turns.
 func (h *Handlers) initiateSession(ctx context.Context, params json.RawMessage) (any, *mcp.Error) {
 	var req InitiateSessionRequest
 	if len(params) > 0 {
@@ -26,6 +36,15 @@ func (h *Handlers) initiateSession(ctx context.Context, params json.RawMessage) 
 
 	if h.store == nil {
 		return nil, &mcp.Error{Code: mcp.ErrInternal, Message: "session store not configured"}
+	}
+
+	// Validate the optional incoming receipt before allocating a
+	// session — a malformed receipt should not leave a half-baked
+	// session row behind.
+	if req.SponsoredContextReceipt != nil {
+		if err := req.SponsoredContextReceipt.Validate(); err != nil {
+			return nil, &mcp.Error{Code: mcp.ErrInvalidParams, Message: "sponsored_context_receipt: " + err.Error()}
+		}
 	}
 
 	sessionID, err := randomID("sess")
@@ -44,18 +63,11 @@ func (h *Handlers) initiateSession(ctx context.Context, params json.RawMessage) 
 
 	consent := req.Identity != nil && req.Identity.ConsentGranted
 
-	// M6.2 — negotiate influence_mode. Empty → default presentation_only.
-	// Unknown → reject (silent downgrade would defeat the audit-trail
-	// purpose). The agreed mode is persisted on the session row so every
-	// subsequent send_message turn can echo it from a single source of
-	// truth.
-	mode := req.InfluenceMode
-	if mode == "" {
-		mode = InfluenceModePresentationOnly
-	}
-	if !mode.IsValid() {
-		return nil, &mcp.Error{Code: mcp.ErrInvalidParams, Message: "unknown influence_mode: " + string(mode)}
-	}
+	// M6.3 — the brand-agent always emits presentation_only on the
+	// welcome turn. The richer use modes (comparison_set, reasoning_
+	// context) can be opted into per send_message in a future revision
+	// where the LLM provider hints the mode for a given answer.
+	emittedUse := ContextUsePresentationOnly
 
 	sess := store.Session{
 		SessionID:      sessionID,
@@ -68,7 +80,7 @@ func (h *Handlers) initiateSession(ctx context.Context, params json.RawMessage) 
 		ConsentGranted: consent,
 		Identity:       identityJSON,
 		Capabilities:   capabilitiesJSON,
-		InfluenceMode:  string(mode),
+		InfluenceMode:  string(emittedUse),
 	}
 	if err := h.store.CreateSession(ctx, sess); err != nil {
 		return nil, &mcp.Error{Code: mcp.ErrInternal, Message: err.Error()}
@@ -84,18 +96,74 @@ func (h *Handlers) initiateSession(ctx context.Context, params json.RawMessage) 
 		return nil, &mcp.Error{Code: mcp.ErrInternal, Message: err.Error()}
 	}
 
+	// Persist the host's pre-session receipt (if present) AFTER the
+	// session row exists so the FK constraint holds. Turn = -1 is the
+	// sentinel reserved for receipts that acknowledge a si_get_offering
+	// that happened before the session was opened.
+	if req.SponsoredContextReceipt != nil {
+		if err := h.persistReceipt(ctx, sessionID, -1, req.SponsoredContextReceipt); err != nil {
+			// Receipt persistence failures are logged but not fatal — the
+			// session is up and the spec doesn't require receipt storage
+			// to be a hard gate. Operators see the failure in stderr.
+			log.Printf("si: persist pre-session receipt failed: %v", err)
+		}
+	}
+
 	return InitiateSessionResponse{
 		SessionID:     sessionID,
 		SessionStatus: "active",
 		Response: SessionTurnResponse{
 			Message: welcome,
 		},
-		BrandName:       h.cfg.Brand.Name,
-		BrandDomain:     h.cfg.Brand.Domain,
-		PayingPrincipal: h.cfg.Brand.PayingPrincipal,
-		InfluenceMode:   mode,
-		Context:         req.Context,
+		BrandName:        h.cfg.Brand.Name,
+		BrandDomain:      h.cfg.Brand.Domain,
+		SponsoredContext: h.buildSponsoredContext(emittedUse),
+		Context:          req.Context,
 	}, nil
+}
+
+// persistReceipt validates → notarises (when a signer is wired) →
+// writes the receipt row. Idempotent on (session_id, turn).
+func (h *Handlers) persistReceipt(ctx context.Context, sessionID string, turn int, r *SponsoredContextReceipt) error {
+	if r == nil {
+		return nil
+	}
+	rawJSON, err := json.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("marshal receipt: %w", err)
+	}
+	receivedAt := time.Now().UTC()
+	row := store.Receipt{
+		SessionID:   sessionID,
+		Turn:        turn,
+		RawJSON:     string(rawJSON),
+		ReceivedAt:  receivedAt,
+		Accepted:    r.HostReceipt.Status == "accepted",
+		AcceptedUse: string(r.HostReceipt.AcceptedContextUse),
+		// MCP bridges mark their synthesised receipts with
+		// host_surface="bridge-synthesized". We can't modify the
+		// embedded sponsored_context (that would invalidate the
+		// brand's declaration), so the host_surface field is the
+		// canonical synth marker per AdCP envelope semantics.
+		Synthesised: r.HostReceipt.HostSurface == "bridge-synthesized",
+	}
+	if h.signer != nil {
+		hash := sha256.Sum256(rawJSON)
+		notaryPayload := map[string]any{
+			"typ":            "adcp-bragent-receipt-notary+jws",
+			"session_id":     sessionID,
+			"turn":           turn,
+			"receipt_sha256": hex.EncodeToString(hash[:]),
+			"received_at":    receivedAt.Format(time.RFC3339Nano),
+			"signer_kid":     h.signer.KeyID(),
+		}
+		jws, err := h.signer.SignReceiptNotary(notaryPayload)
+		if err != nil {
+			return fmt.Errorf("notarise receipt: %w", err)
+		}
+		row.NotaryJWS = jws
+	}
+	return h.store.SaveReceipt(ctx, row)
 }
 
 func (h *Handlers) welcomeMessage(req InitiateSessionRequest) string {

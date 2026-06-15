@@ -3,6 +3,7 @@ package si
 import (
 	"context"
 	"encoding/json"
+	"log"
 
 	"github.com/kapoost/bragent/internal/llm"
 	"github.com/kapoost/bragent/internal/mcp"
@@ -27,6 +28,13 @@ func (h *Handlers) sendMessage(ctx context.Context, params json.RawMessage) (any
 	if req.Message == "" {
 		return nil, &mcp.Error{Code: mcp.ErrInvalidParams, Message: "message required"}
 	}
+	// M6.3 — validate the optional incoming receipt before we touch the
+	// session so a malformed receipt doesn't pollute the audit log.
+	if req.SponsoredContextReceipt != nil {
+		if err := req.SponsoredContextReceipt.Validate(); err != nil {
+			return nil, &mcp.Error{Code: mcp.ErrInvalidParams, Message: "sponsored_context_receipt: " + err.Error()}
+		}
+	}
 
 	sess, err := h.store.GetSession(ctx, req.SessionID)
 	if err != nil {
@@ -44,6 +52,20 @@ func (h *Handlers) sendMessage(ctx context.Context, params json.RawMessage) (any
 	turn, err := h.store.NextTurn(ctx, req.SessionID)
 	if err != nil {
 		return nil, &mcp.Error{Code: mcp.ErrInternal, Message: err.Error()}
+	}
+
+	// Persist the incoming receipt against the BRAND turn it
+	// acknowledges (the prior brand response, turn = current-host-turn - 1).
+	// Done before LLM call so even a slow upstream doesn't drop the
+	// audit record.
+	if req.SponsoredContextReceipt != nil {
+		brandTurnAcked := turn - 1
+		if brandTurnAcked < 0 {
+			brandTurnAcked = 0 // first send_message acknowledges the welcome (turn 0)
+		}
+		if err := h.persistReceipt(ctx, req.SessionID, brandTurnAcked, req.SponsoredContextReceipt); err != nil {
+			log.Printf("si: persist receipt for session=%s turn=%d failed: %v", req.SessionID, brandTurnAcked, err)
+		}
 	}
 	if err := h.store.AppendMessage(ctx, store.Message{
 		SessionID: req.SessionID,
@@ -93,15 +115,20 @@ func (h *Handlers) sendMessage(ctx context.Context, params json.RawMessage) (any
 		}
 	}
 
+	// M6.3 — emit a fresh sponsored_context envelope on each brand turn.
+	// We could promote ContextUse on handoff turns (the handoff URL is
+	// a rendered unit, presentation_only stays correct) or on
+	// recommendation turns (comparison_set semantics) — for now we
+	// default everything to presentation_only and let a future
+	// llm.Provider hint richer modes per response.
+	emitted := ContextUsePresentationOnly
+
 	resp := SendMessageResponse{
-		SessionID:     req.SessionID,
-		SessionStatus: reply.SessionStatus,
-		Response:      SessionTurnResponse{Message: reply.Message},
-		// M6.2 — echo the negotiated influence_mode on every turn so each
-		// message in the host's audit log carries the mode it was
-		// generated under (Masse primitive #3, per-turn shape).
-		InfluenceMode: InfluenceMode(sess.InfluenceMode),
-		Context:       req.Context,
+		SessionID:        req.SessionID,
+		SessionStatus:    reply.SessionStatus,
+		Response:         SessionTurnResponse{Message: reply.Message},
+		SponsoredContext: h.buildSponsoredContext(emitted),
+		Context:          req.Context,
 	}
 	if reply.HandoffURL != "" {
 		resp.Handoff = &HandoffInfo{URL: reply.HandoffURL, SessionID: req.SessionID}

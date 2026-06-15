@@ -46,13 +46,17 @@ import (
 )
 
 // SessionState carries per-stdio-connection mutable state that the
-// underlying SI handlers don't know about. The active session_id is
-// the only thing we hold — once the host calls si_initiate_session,
-// subsequent si_send_message / si_terminate_session calls don't need
-// the host to thread the session_id through every Claude turn.
+// underlying SI handlers don't know about:
+//   - the active session_id (so subsequent tool calls don't have to
+//     thread it through the host model);
+//   - the pending sponsored_context_receipt to attach to the NEXT
+//     outgoing request — M6.3 dual-trail, populated by updateState()
+//     whenever bragent's response carries a sponsored_context envelope
+//     and consumed by takePending() on the next tool dispatch.
 type SessionState struct {
 	mu        sync.Mutex
 	sessionID string
+	pending   map[string]any // synthesised receipt for the next outbound request
 }
 
 func (s *SessionState) get() string {
@@ -65,25 +69,61 @@ func (s *SessionState) set(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessionID = id
+	// Resetting session resets the pending receipt — a stale receipt
+	// from a prior conversation must never leak into a fresh one.
+	if id == "" {
+		s.pending = nil
+	}
+}
+
+func (s *SessionState) setPending(r map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pending = r
+}
+
+func (s *SessionState) takePending() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.pending
+	s.pending = nil
+	return r
 }
 
 // Server runs the stdio loop. Construct with the same mcp.Handler the
 // HTTP server uses; the bridging happens inside Run.
 type Server struct {
-	handler mcp.Handler
-	state   *SessionState
-	in      *bufio.Reader
-	out     io.Writer
-	writeMu sync.Mutex // stdout writes must be serialised
+	handler     mcp.Handler
+	state       *SessionState
+	autoReceipt AutoReceiptMode
+	in          *bufio.Reader
+	out         io.Writer
+	writeMu     sync.Mutex // stdout writes must be serialised
 }
 
+// New constructs the stdio MCP server with default --auto-receipt =
+// accept-presentation. Use WithAutoReceipt to override.
 func New(h mcp.Handler) *Server {
 	return &Server{
-		handler: h,
-		state:   &SessionState{},
-		in:      bufio.NewReader(os.Stdin),
-		out:     os.Stdout,
+		handler:     h,
+		state:       &SessionState{},
+		autoReceipt: AutoReceiptAcceptPresentation,
+		in:          bufio.NewReader(os.Stdin),
+		out:         os.Stdout,
 	}
+}
+
+// WithAutoReceipt sets the synthesis policy for outgoing
+// sponsored_context_receipt envelopes. See AutoReceiptMode constants.
+// Unknown / empty mode reverts to the default (AcceptPresentation).
+func (s *Server) WithAutoReceipt(mode AutoReceiptMode) *Server {
+	switch mode {
+	case AutoReceiptAcceptPresentation, AutoReceiptAcceptAll, AutoReceiptRejectAll, AutoReceiptOff:
+		s.autoReceipt = mode
+	default:
+		s.autoReceipt = AutoReceiptAcceptPresentation
+	}
+	return s
 }
 
 // Run blocks reading newline-delimited JSON-RPC frames from stdin and
