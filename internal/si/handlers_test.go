@@ -74,10 +74,16 @@ func TestInitiateSession_EchoesContext(t *testing.T) {
 	}
 }
 
-func TestCapabilities_EmitsBothSpecialismIDs(t *testing.T) {
+func TestCapabilities_EmitsCanonicalSpecialismID(t *testing.T) {
 	h := newTestHandlers(t)
 	caps := h.capabilities()
 
+	// AAO comply runner iterates all specialisms on the wire and
+	// rejects on any unknown ID. We emit ONLY the spec-canonical
+	// `sponsored-intelligence` (3.1.0-rc.* AdCPSpecialism enum). The
+	// M1 legacy `sponsored_intelligence.core` was dropped on the
+	// canonical-only switch — no public host has been observed
+	// matching on the underscored form.
 	var hasUnderscored, hasHyphenated bool
 	for _, s := range caps.Specialisms {
 		if s == "sponsored_intelligence.core" {
@@ -87,11 +93,11 @@ func TestCapabilities_EmitsBothSpecialismIDs(t *testing.T) {
 			hasHyphenated = true
 		}
 	}
-	if !hasUnderscored {
-		t.Error("missing legacy underscored specialism ID")
-	}
 	if !hasHyphenated {
 		t.Error("missing spec-canonical hyphenated specialism ID")
+	}
+	if hasUnderscored {
+		t.Error("legacy underscored specialism ID still emitted; AAO comply runner rejects on unknown IDs in the list")
 	}
 }
 
