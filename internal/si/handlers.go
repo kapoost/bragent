@@ -290,11 +290,27 @@ func (h *Handlers) getOffering(_ context.Context, params json.RawMessage) (any, 
 		return nil, &mcp.Error{Code: mcp.ErrInternal, Message: "token: " + err.Error()}
 	}
 
+	// Canonical shape per 3.1.0-rc.14 si-get-offering-response: `available`
+	// is REQUIRED, `offering` is the primary canonical match, and
+	// `matching_products` carries alternates. `offerings: []` is retained
+	// as a back-compat alias.
+	var primary *Offering
+	var matchingProducts []Offering
+	if len(offerings) > 0 {
+		first := offerings[0]
+		primary = &first
+		if len(offerings) > 1 {
+			matchingProducts = offerings[1:]
+		}
+	}
 	return OfferingPreviewResponse{
-		Offerings:     offerings,
-		OfferingToken: token,
-		BrandName:     h.cfg.Brand.Name,
-		BrandDomain:   h.cfg.Brand.Domain,
+		Available:        len(offerings) > 0,
+		Offering:         primary,
+		MatchingProducts: matchingProducts,
+		Offerings:        offerings, // legacy alias
+		OfferingToken:    token,
+		BrandName:        h.cfg.Brand.Name,
+		BrandDomain:      h.cfg.Brand.Domain,
 		// Disclaimer is appended to every preview — brand owns the catalog,
 		// final price/availability are confirmed only at the brand's own
 		// checkout. Hardcoded to keep host UIs from rendering stale data

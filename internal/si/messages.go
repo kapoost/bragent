@@ -166,6 +166,7 @@ func (h *Handlers) terminateSession(ctx context.Context, params json.RawMessage)
 
 	return TerminateSessionResponse{
 		SessionID:     req.SessionID,
+		Terminated:    true,
 		SessionStatus: "terminated",
 		Reason:        req.Reason,
 		Context:       req.Context,

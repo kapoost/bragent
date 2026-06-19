@@ -243,11 +243,33 @@ type OfferingPreviewRequest struct {
 // OfferingPreviewResponse now carries sponsored_context (M6.3) — the
 // offering and matching_products are sponsored content entering the
 // host boundary, so the declaration applies to the package as a whole.
+//
+// Wire shape conforms to /schemas/3.1.0-rc.14/sponsored-intelligence/
+// si-get-offering-response.json: `available: boolean` is REQUIRED;
+// `offering` (singular) carries the primary canonical offering when
+// the query resolved to one, and `matching_products` carries the
+// alternates. The legacy `offerings: []` field is retained as a
+// back-compat alias for hosts still reading the M1 shape (additive).
 type OfferingPreviewResponse struct {
-	Offerings        []Offering        `json:"offerings"`
-	OfferingToken    string            `json:"offering_token"`
-	BrandName        string            `json:"brand_name"`
-	BrandDomain      string            `json:"brand_domain"`
+	// REQUIRED — `true` when we have a matching offering to serve,
+	// `false` when the query resolved to nothing and the host should
+	// surface unavailable_reason / alternative_offering_ids.
+	Available bool `json:"available"`
+	// Primary offering when a single canonical match exists. Mirrors
+	// the spec's `offering: object` field; populated from offerings[0]
+	// to keep the canonical shape backwards-compatible with the
+	// legacy plural alias below.
+	Offering *Offering `json:"offering,omitempty"`
+	// Alternates beyond the primary `offering`. Empty when only the
+	// canonical offering exists (or when nothing matched).
+	MatchingProducts []Offering `json:"matching_products,omitempty"`
+	// Legacy plural alias — M1 shape, kept additive so hosts that pin
+	// the old field keep working. New hosts read `offering` +
+	// `matching_products`.
+	Offerings        []Offering        `json:"offerings,omitempty"`
+	OfferingToken    string            `json:"offering_token,omitempty"`
+	BrandName        string            `json:"brand_name,omitempty"`
+	BrandDomain      string            `json:"brand_domain,omitempty"`
 	Disclaimer       string            `json:"disclaimer,omitempty"`
 	SponsoredContext *SponsoredContext `json:"sponsored_context,omitempty"`
 	Context          json.RawMessage   `json:"context,omitempty"`
@@ -411,9 +433,15 @@ type TerminateSessionRequest struct {
 	Ext       json.RawMessage `json:"ext,omitempty"`
 }
 
+// TerminateSessionResponse conforms to /schemas/3.1.0-rc.14/
+// sponsored-intelligence/si-terminate-session-response.json.
+// REQUIRED: session_id (echo) + terminated (boolean acknowledgement).
+// session_status is the legacy enum we shipped in M3; canonical shape
+// uses terminated:bool plus the optional session_status enum.
 type TerminateSessionResponse struct {
 	SessionID     string          `json:"session_id"`
-	SessionStatus string          `json:"session_status"`
+	Terminated    bool            `json:"terminated"`
+	SessionStatus string          `json:"session_status,omitempty"`
 	Reason        string          `json:"reason,omitempty"`
 	Context       json.RawMessage `json:"context,omitempty"`
 	Ext           json.RawMessage `json:"ext,omitempty"`
