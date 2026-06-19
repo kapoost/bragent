@@ -70,7 +70,13 @@ func (h *Handlers) Handle(ctx context.Context, method string, params json.RawMes
 }
 
 func (h *Handlers) capabilities() CapabilitiesResponse {
-	specialisms := []string{"sponsored_intelligence.core", "sponsored-intelligence"}
+	// Order matters: AAO comply matchers pick the first specialism that
+	// resolves against the local cache; if we lead with the legacy
+	// underscored ID (`sponsored_intelligence.core` — M1) the matcher
+	// rejects the agent before falling through to the canonical
+	// hyphenated form. Spec-canonical first, legacy second for backwards
+	// compat with hosts that still match on the underscored M1 shape.
+	specialisms := []string{"sponsored-intelligence", "sponsored_intelligence.core"}
 	tools := []string{
 		"get_adcp_capabilities",
 		"si_get_offering",
