@@ -270,13 +270,29 @@ type Offering struct {
 // in every SI response via sponsored_context, and capabilities goes
 // back to being a thin discovery surface.
 type CapabilitiesResponse struct {
-	AdCPVersion        string   `json:"adcp_version"`
-	Role               string   `json:"role"`
-	Specialisms        []string `json:"specialisms"`
-	SupportedProtocols []string `json:"supported_protocols"`
-	Capabilities       []string `json:"capabilities"`
-	AgentName          string   `json:"agent_name"`
-	AgentURL           string   `json:"agent_url"`
+	AdCPVersion        string             `json:"adcp_version"`
+	Role               string             `json:"role"`
+	Specialisms        []string           `json:"specialisms"`
+	SupportedProtocols []string           `json:"supported_protocols"`
+	Capabilities       []string           `json:"capabilities"`
+	AgentName          string             `json:"agent_name"`
+	AgentURL           string             `json:"agent_url"`
+	// AdCP version negotiation block. AAO comply runners + buyer agents
+	// reading the prerelease tracks gate on `adcp.supported_versions` —
+	// without it `evaluate_agent_quality(compliance_target=3.1-rc)`
+	// returns "agent does not advertise support for that target".
+	// Spec: get-adcp-capabilities.json `adcp` property; release-precision
+	// strings (e.g. "3.0", "3.1", "3.1-beta") per AdCP §version-negotiation.
+	AdCP AdCPCapabilities `json:"adcp"`
+}
+
+// AdCPCapabilities is the version-negotiation block returned on
+// get_adcp_capabilities. Mirrors `/schemas/3.x/protocol/get-adcp-capabilities-response.json
+// .properties.adcp`. `supported_major_versions` is deprecated; emit it
+// for backwards compat with 3.x sellers that still read the legacy field.
+type AdCPCapabilities struct {
+	SupportedMajorVersions []string `json:"supported_major_versions"`
+	SupportedVersions      []string `json:"supported_versions"`
 }
 
 // InitiateSessionRequest carries sponsored_context_receipt (M6.3) when

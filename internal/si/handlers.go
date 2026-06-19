@@ -106,6 +106,17 @@ func (h *Handlers) capabilities() CapabilitiesResponse {
 		Capabilities:       tools,
 		AgentName:          h.cfg.Brand.Name,
 		AgentURL:           fmt.Sprintf("https://%s/mcp", h.cfg.Brand.Domain),
+		// Version negotiation. Declare both the stable 3.0 release we
+		// fully implement AND the 3.1-rc prerelease — bragent already
+		// honours sponsored-intelligence/sponsored_context (3.1.0-rc.14
+		// surface) for SI hosts that pin a prerelease target. Without
+		// this block AAO comply runners refuse to dispatch prerelease
+		// scenarios with "agent does not advertise support for that
+		// target".
+		AdCP: AdCPCapabilities{
+			SupportedMajorVersions: []string{"3"},
+			SupportedVersions:      []string{"3.0", "3.1-rc"},
+		},
 		// M6.3: capabilities goes back to being a thin discovery surface.
 		// The M6.2-era PayingPrincipal + InfluenceModesSupported extension
 		// fields are gone — sponsored_context now travels in every SI
