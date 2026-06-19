@@ -284,18 +284,56 @@ type CapabilitiesResponse struct {
 	// Spec: get-adcp-capabilities.json `adcp` property; release-precision
 	// strings (e.g. "3.0", "3.1", "3.1-beta") per AdCP §version-negotiation.
 	AdCP AdCPCapabilities `json:"adcp"`
+	// Sponsored Intelligence protocol block. Required by the 3.1.0-rc.*
+	// schema when sponsored_intelligence is in supported_protocols.
+	// `endpoint.transports` lists how hosts reach us; bragent ships MCP
+	// over HTTP today.
+	SponsoredIntelligence SIBlock `json:"sponsored_intelligence"`
 }
 
-// AdCPCapabilities is the version-negotiation block returned on
-// get_adcp_capabilities. Mirrors `/schemas/3.x/protocol/get-adcp-capabilities-response.json
-// .properties.adcp`. `major_versions` is deprecated through 3.x but
-// REQUIRED on the wire — schema declares `items.type: integer` so we
-// emit `[3]` not `["3"]`. `supported_versions` is the release-precision
-// successor used by the 3.1+ resolver.
+// AdCPCapabilities is the version-negotiation + idempotency block
+// returned on get_adcp_capabilities. Mirrors `/schemas/3.x/protocol/
+// get-adcp-capabilities-response.json .properties.adcp`. Schema requires
+// `major_versions` (integer array) and `idempotency` (discriminated
+// union on `supported`).
 type AdCPCapabilities struct {
-	MajorVersions     []int    `json:"major_versions"`
-	SupportedVersions []string `json:"supported_versions"`
+	MajorVersions     []int             `json:"major_versions"`
+	SupportedVersions []string          `json:"supported_versions"`
+	Idempotency       IdempotencyConfig `json:"idempotency"`
 }
+
+// IdempotencyConfig declares whether the seller honors idempotency_key
+// replay protection on mutating requests. We don't (sessions are
+// canonical state, replays are not deduped) so we emit the
+// IdempotencyUnsupported branch with supported=false.
+type IdempotencyConfig struct {
+	Supported bool `json:"supported"`
+}
+
+// SIBlock is the `sponsored_intelligence` capability block required by
+// the 3.1.0-rc.* response schema when sponsored_intelligence is in
+// supported_protocols. `endpoint.transports` declares how hosts reach
+// us; `capabilities` declares the SI modalities/components we support.
+type SIBlock struct {
+	Endpoint     SIEndpoint     `json:"endpoint"`
+	Capabilities SICapabilities `json:"capabilities"`
+}
+
+type SIEndpoint struct {
+	Transports []SITransport `json:"transports"`
+	Preferred  string        `json:"preferred,omitempty"`
+}
+
+type SITransport struct {
+	Type string `json:"type"` // "mcp" | "a2a"
+	URL  string `json:"url"`
+}
+
+// SICapabilities is intentionally empty for the bragent reference impl.
+// We support the base SI lifecycle (session init/message/terminate +
+// offering preview) with no extended modalities (no MCP Apps, no A2UI,
+// no commerce-side features) — `capabilities: {}` is spec-valid here.
+type SICapabilities struct{}
 
 // InitiateSessionRequest carries sponsored_context_receipt (M6.3) when
 // the host accepted a prior si_get_offering response and wants to

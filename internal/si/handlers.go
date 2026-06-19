@@ -185,6 +185,22 @@ func (h *Handlers) capabilities() CapabilitiesResponse {
 		AdCP: AdCPCapabilities{
 			MajorVersions:     []int{3},
 			SupportedVersions: []string{"3.0", "3.1-rc"},
+			Idempotency: IdempotencyConfig{
+				// Sessions are canonical state; replays do not dedupe.
+				// Declare false so retry-sensitive buyers know we don't
+				// honor idempotency_key — emitting the discriminator
+				// at all is what the schema requires.
+				Supported: false,
+			},
+		},
+		SponsoredIntelligence: SIBlock{
+			Endpoint: SIEndpoint{
+				Transports: []SITransport{
+					{Type: "mcp", URL: fmt.Sprintf("https://%s/mcp", h.cfg.Brand.Domain)},
+				},
+				Preferred: "mcp",
+			},
+			Capabilities: SICapabilities{},
 		},
 		// M6.3: capabilities goes back to being a thin discovery surface.
 		// The M6.2-era PayingPrincipal + InfluenceModesSupported extension
