@@ -28,7 +28,10 @@ primary_region = "fra"
   BRAGENT_LLM_MODEL    = "claude-haiku-4-5"
   # Make the brand.json domain match the actual public hostname so buyer
   # agents resolving via /.well-known/brand.json see a consistent identity.
-  BRAGENT_BRAND_DOMAIN = "bragent-demo.fly.dev"
+  # Canonical under rocketscience.pl as of 2026-06-19; CNAME for
+  # bragent.rocketscience.pl → bragent-demo.fly.dev + LetsEncrypt cert
+  # provisioned via `fly certs create`.
+  BRAGENT_BRAND_DOMAIN = "bragent.rocketscience.pl"
   # M6.3 demo panel — public /demo/ with read-only catalog, BYOK chat,
   # auto-receipt synthesis, and an in-memory session store. Used as the
   # WG-SI demo URL.
