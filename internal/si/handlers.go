@@ -48,25 +48,93 @@ func (h *Handlers) WithBrand(b *brand.Handler) *Handlers {
 }
 
 func (h *Handlers) Handle(ctx context.Context, method string, params json.RawMessage) (any, *mcp.Error) {
+	var inner any
+	var rpcErr *mcp.Error
 	switch method {
 	case "get_adcp_capabilities":
-		return h.capabilities(), nil
+		inner = h.capabilities()
 	case "si_get_offering":
-		return h.getOffering(ctx, params)
+		inner, rpcErr = h.getOffering(ctx, params)
 	case "si_initiate_session":
-		return h.initiateSession(ctx, params)
+		inner, rpcErr = h.initiateSession(ctx, params)
 	case "si_send_message":
-		return h.sendMessage(ctx, params)
+		inner, rpcErr = h.sendMessage(ctx, params)
 	case "si_terminate_session":
-		return h.terminateSession(ctx, params)
+		inner, rpcErr = h.terminateSession(ctx, params)
 	case "verify_brand_claim":
 		if h.brand == nil {
 			return nil, &mcp.Error{Code: mcp.ErrMethodNotFound, Message: "verify_brand_claim not configured"}
 		}
-		return h.brand.VerifyBrandClaim(ctx, params)
+		inner, rpcErr = h.brand.VerifyBrandClaim(ctx, params)
 	default:
 		return nil, &mcp.Error{Code: mcp.ErrMethodNotFound, Message: "unknown method: " + method}
 	}
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	return wrapEnvelope(inner, params), nil
+}
+
+// wrapEnvelope injects the AdCP 3.1.0-rc.* v3 envelope fields onto every
+// outgoing response. Per /schemas/3.1.0-rc.14/core/protocol-envelope.json:
+//
+//   - status (REQUIRED) — task-status enum value; sync metadata calls use
+//     "completed". A response without this field fails
+//     v3_envelope_integrity/envelope_integrity_check even when the body
+//     schema would otherwise validate.
+//   - context (REQUIRED for echo) — byte-for-byte echo of the caller's
+//     `context` object. Used for trace IDs, correlation, UI session
+//     stitching. The version_negotiation and v3_envelope_integrity
+//     storyboards both assert context.correlation_id round-trips.
+//   - adcp_version (advisory at 3.1, MUST at 4.0) — release-precision
+//     string of the AdCP release the server actually served. We declare
+//     supported_versions ["3.0", "3.1-rc"]; echo "3.1-rc" because the
+//     envelope shape we now emit IS the 3.1.0-rc.* shape.
+//
+// The wrap flattens the body fields to siblings of the envelope fields
+// per MCP/REST transport rules ("envelope fields and task-body fields
+// are siblings at the root of the tool response" — protocol-envelope.json
+// notes). On A2A the same envelope fields map to task metadata; we
+// don't speak A2A yet, so the MCP/REST shape is the only one.
+func wrapEnvelope(inner any, params json.RawMessage) any {
+	out := map[string]any{
+		"status":       "completed",
+		"adcp_version": "3.1-rc",
+	}
+	// Echo per-request `context` byte-for-byte. AAO comply runner sends
+	// `{context: {correlation_id: "<storyboard>--<step>"}}` and asserts
+	// the echo round-trips with the same correlation_id value.
+	if len(params) > 0 {
+		var req struct {
+			Context json.RawMessage `json:"context"`
+		}
+		if err := json.Unmarshal(params, &req); err == nil && len(req.Context) > 0 {
+			out["context"] = json.RawMessage(req.Context)
+		}
+	}
+	// Flatten the inner response onto the envelope. Per protocol-envelope.json
+	// notes: "On MCP the body fields appear as siblings of envelope fields
+	// at the root of the tool response". The envelope wins on field-name
+	// collision (the body has no reason to declare `status` etc).
+	body, err := json.Marshal(inner)
+	if err != nil {
+		// Marshal failure on a typed handler return is a real bug;
+		// surface inner as-is in a `payload` key rather than swallow.
+		out["payload"] = inner
+		return out
+	}
+	var bodyMap map[string]any
+	if err := json.Unmarshal(body, &bodyMap); err != nil {
+		out["payload"] = inner
+		return out
+	}
+	for k, v := range bodyMap {
+		if _, taken := out[k]; taken {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 func (h *Handlers) capabilities() CapabilitiesResponse {
@@ -115,8 +183,8 @@ func (h *Handlers) capabilities() CapabilitiesResponse {
 		// scenarios with "agent does not advertise support for that
 		// target".
 		AdCP: AdCPCapabilities{
-			SupportedMajorVersions: []string{"3"},
-			SupportedVersions:      []string{"3.0", "3.1-rc"},
+			MajorVersions:     []int{3},
+			SupportedVersions: []string{"3.0", "3.1-rc"},
 		},
 		// M6.3: capabilities goes back to being a thin discovery surface.
 		// The M6.2-era PayingPrincipal + InfluenceModesSupported extension

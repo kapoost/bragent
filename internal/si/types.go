@@ -288,11 +288,13 @@ type CapabilitiesResponse struct {
 
 // AdCPCapabilities is the version-negotiation block returned on
 // get_adcp_capabilities. Mirrors `/schemas/3.x/protocol/get-adcp-capabilities-response.json
-// .properties.adcp`. `supported_major_versions` is deprecated; emit it
-// for backwards compat with 3.x sellers that still read the legacy field.
+// .properties.adcp`. `major_versions` is deprecated through 3.x but
+// REQUIRED on the wire — schema declares `items.type: integer` so we
+// emit `[3]` not `["3"]`. `supported_versions` is the release-precision
+// successor used by the 3.1+ resolver.
 type AdCPCapabilities struct {
-	SupportedMajorVersions []string `json:"supported_major_versions"`
-	SupportedVersions      []string `json:"supported_versions"`
+	MajorVersions     []int    `json:"major_versions"`
+	SupportedVersions []string `json:"supported_versions"`
 }
 
 // InitiateSessionRequest carries sponsored_context_receipt (M6.3) when
