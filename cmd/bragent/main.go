@@ -134,7 +134,19 @@ func main() {
 		return
 	}
 
-	server := mcp.NewServer(cfg.Server, handlers, wk)
+	// Wrap the native AdCP JSON-RPC handler with the MCP-protocol envelope
+	// so AAO comply runners (and any MCP-aware buyer SDK) discover tools
+	// via `initialize` + `tools/list` + `tools/call`. Native callers that
+	// post `si_*` methods directly to /mcp still work — the envelope
+	// passes unrecognised methods through to the inner handler.
+	mcpEnvelope := mcp.NewEnvelopeHandler(
+		handlers,
+		handlers.ToolDescriptors(),
+		"bragent",
+		Version,
+		si.MCPInstructions,
+	)
+	server := mcp.NewServer(cfg.Server, mcpEnvelope, wk)
 
 	adminState := "off"
 	if cfg.Admin.Enabled {
