@@ -260,9 +260,11 @@ type OfferingPreviewResponse struct {
 	// to keep the canonical shape backwards-compatible with the
 	// legacy plural alias below.
 	Offering *Offering `json:"offering,omitempty"`
-	// Alternates beyond the primary `offering`. Empty when only the
-	// canonical offering exists (or when nothing matched).
-	MatchingProducts []Offering `json:"matching_products,omitempty"`
+	// Alternates beyond the primary `offering`. Spec shape is distinct
+	// from `offering` — product_id + name (not offering_id + title),
+	// price as string (localised). Empty when only the canonical
+	// offering exists (or when nothing matched).
+	MatchingProducts []MatchingProduct `json:"matching_products,omitempty"`
 	// Legacy plural alias — M1 shape, kept additive so hosts that pin
 	// the old field keep working. New hosts read `offering` +
 	// `matching_products`.
@@ -276,15 +278,48 @@ type OfferingPreviewResponse struct {
 	Ext              json.RawMessage   `json:"ext,omitempty"`
 }
 
+// Offering is the canonical primary-match shape per
+// /schemas/3.1.0-rc.14/sponsored-intelligence/si-get-offering-response.json
+// .properties.offering. Field set matches the spec: offering_id, title,
+// summary/tagline (narrative-friendly variants), price_hint (string —
+// localised, human-readable), image_url, landing_url, availability_status.
+// We carry richer typed data (Price float, Currency, Description) in the
+// extension fields below so existing M1 consumers and the admin UI still
+// see the data they expect — additionalProperties:true on the spec
+// schema makes the extras schema-valid.
 type Offering struct {
 	OfferingID         string             `json:"offering_id"`
 	Title              string             `json:"title"`
-	Description        string             `json:"description,omitempty"`
-	Price              float64            `json:"price,omitempty"`
-	Currency           string             `json:"currency,omitempty"`
-	URL                string             `json:"url,omitempty"`
-	Available          bool               `json:"available"`
+	Summary            string             `json:"summary,omitempty"`
+	Tagline            string             `json:"tagline,omitempty"`
+	PriceHint          string             `json:"price_hint,omitempty"`
+	ImageURL           string             `json:"image_url,omitempty"`
+	LandingURL         string             `json:"landing_url,omitempty"`
 	AvailabilityStatus AvailabilityStatus `json:"availability_status,omitempty"`
+	// M1/legacy extension fields. Schema is `additionalProperties: true`
+	// so these ride through validation; legacy admin UI and the demo
+	// panel still read them.
+	Description string  `json:"description,omitempty"`
+	Price       float64 `json:"price,omitempty"`
+	Currency    string  `json:"currency,omitempty"`
+	URL         string  `json:"url,omitempty"`
+	Available   bool    `json:"available"`
+}
+
+// MatchingProduct is the canonical alternate-match shape per
+// /schemas/3.1.0-rc.14/sponsored-intelligence/si-get-offering-response.json
+// .properties.matching_products.items. Different field set than Offering
+// (product_id + name, not offering_id + title; price is string;
+// availability_summary instead of summary).
+type MatchingProduct struct {
+	ProductID            string             `json:"product_id"`
+	Name                 string             `json:"name"`
+	Price                string             `json:"price,omitempty"`
+	OriginalPrice        string             `json:"original_price,omitempty"`
+	ImageURL             string             `json:"image_url,omitempty"`
+	AvailabilitySummary  string             `json:"availability_summary,omitempty"`
+	AvailabilityStatus   AvailabilityStatus `json:"availability_status,omitempty"`
+	URL                  string             `json:"url,omitempty"`
 }
 
 // CapabilitiesResponse — M6.3 drops our M6.2-era PayingPrincipal +

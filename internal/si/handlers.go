@@ -276,12 +276,17 @@ func (h *Handlers) getOffering(_ context.Context, params json.RawMessage) (any, 
 		offerings = append(offerings, Offering{
 			OfferingID:         p.ID,
 			Title:              p.Name,
-			Description:        p.Description,
-			Price:              p.Price,
-			Currency:           p.Currency,
-			URL:                p.URL,
-			Available:          p.Available,
+			Summary:            p.Description,
+			PriceHint:          formatPriceHint(p.Price, p.Currency),
+			LandingURL:         p.URL,
 			AvailabilityStatus: availabilityFromFeed(p.Available),
+			// Legacy/extension fields below — schema is
+			// additionalProperties: true so these ride through validation.
+			Description: p.Description,
+			Price:       p.Price,
+			Currency:    p.Currency,
+			URL:         p.URL,
+			Available:   p.Available,
 		})
 	}
 
@@ -292,15 +297,25 @@ func (h *Handlers) getOffering(_ context.Context, params json.RawMessage) (any, 
 
 	// Canonical shape per 3.1.0-rc.14 si-get-offering-response: `available`
 	// is REQUIRED, `offering` is the primary canonical match, and
-	// `matching_products` carries alternates. `offerings: []` is retained
-	// as a back-compat alias.
+	// `matching_products[]` carries alternates with a DIFFERENT field
+	// set (product_id+name, not offering_id+title; price as string).
+	// `offerings: []` is retained as a back-compat alias for the M1
+	// shape.
 	var primary *Offering
-	var matchingProducts []Offering
+	var matchingProducts []MatchingProduct
 	if len(offerings) > 0 {
 		first := offerings[0]
 		primary = &first
-		if len(offerings) > 1 {
-			matchingProducts = offerings[1:]
+		for _, o := range offerings[1:] {
+			matchingProducts = append(matchingProducts, MatchingProduct{
+				ProductID:           o.OfferingID,
+				Name:                o.Title,
+				Price:               o.PriceHint,
+				ImageURL:            o.ImageURL,
+				AvailabilityStatus:  o.AvailabilityStatus,
+				AvailabilitySummary: o.Summary,
+				URL:                 o.LandingURL,
+			})
 		}
 	}
 	return OfferingPreviewResponse{
@@ -333,6 +348,20 @@ func (h *Handlers) getOffering(_ context.Context, params json.RawMessage) (any, 
 // → nowRFC3339. Defensive guard so future refactors don't drop the
 // import without noticing.
 var _ = time.RFC3339
+
+// formatPriceHint renders the typed (float, currency) tuple into the
+// human-readable string the spec's offering.price_hint expects.
+// Empty currency → "$XX.YY" default; otherwise "CCY XX.YY". When price
+// is zero we emit nothing (omitempty drops the field on the wire).
+func formatPriceHint(price float64, currency string) string {
+	if price == 0 {
+		return ""
+	}
+	if currency == "" {
+		return fmt.Sprintf("$%.2f", price)
+	}
+	return fmt.Sprintf("%s %.2f", currency, price)
+}
 
 // availabilityFromFeed maps the boolean feed flag to the spec
 // availability_status enum. Conservative defaults: a present, in-stock
