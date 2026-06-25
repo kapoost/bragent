@@ -22,6 +22,8 @@ Local: `/Users/kapoost/adcp/bragent/`.
 | M6.2 | ✅ | `3ce992e` | top-level `paying_principal` URL + `influence_mode` enum on SI responses (zero-th primitive proposed in WG-SI) |
 | M6.3 | ✅ | `3a402aa` | conformance pass for AdCP PR #5501: full `sponsored_context` envelope + `sponsored_context_receipt` with JWS-notarised audit trail; admin dual-trail; `--auto-receipt` synthesis in stdio + Python bridges. Tagged as **v0.2.0**. |
 | M6.4 | ✅ | _pending_ | public `/demo/` panel — zero-token, in-memory sessions, read-only catalog, BYOK chat (Anthropic/OpenAI/Groq/DeepSeek with endpoint whitelist), wire-view showing live `sponsored_context` + auto-synthesised receipt for the WG-SI audience. Off by default; `BRAGENT_DEMO_ENABLED=true` on Fly. |
+| M6.5 | ✅ | `ca5a01b` | canonical hostname `bragent.rocketscience.pl` (CF CNAME → fly, LetsEncrypt cert), `BRAGENT_BRAND_DOMAIN` updated; AAO registry listing under `org_01KR16GVAZGRQWHNYR5TJ3NYV6` as type=brand, members_only. |
+| M7 | ✅ | `f7f1740`→`6f01ec0` | MCP-protocol envelope (initialize/tools/list/tools/call) on HTTP transport; native JSON-RPC retained as fallthrough. v3 envelope on every Handle() response (`status`, `context` echo, `adcp_version`). Full v3 capabilities schema (`adcp.idempotency`, `sponsored_intelligence{endpoint,capabilities}`). Canonical SI shapes: `si_get_offering` with `available`/`offering`/`matching_products[]`, `si_terminate_session.terminated`. **AAO 3.1-rc compliance: Core SILENT 32/32 + Sponsored Intelligence PASS 4/4 + Error Handling SKIP — all applicable tracks green.** 3.0 compliance impossible by design (sponsored-intelligence specialism only exists in 3.1-beta.7+ cache); dashboard headline will stay "degraded" until AAO promotes 3.1-rc to badge-eligible. |
 
 Pełen SI lifecycle smoke-tested: `initiate → message → buy-intent → pending_handoff → terminate` z SQLite audit trail.
 
@@ -96,6 +98,9 @@ M5 — additive spec sync from 3.1.0-rc.* (none gated on SI graduation; all back
 
 M6+ — brand-agent surface beyond SI (still upstream, may overlap with our scope):
 - **`verify_brand_claim` / `verify_brand_claims`** — new brand-agent tools landed in 3.1.0-rc.*. Four claim types (`subsidiary`, `parent`, `property`, `trademark`), signed responses, asymmetric trust model. Worth a separate milestone after `v0.1.0` — adds a real brand-identity surface that pairs naturally with SI.
+
+M7 — **MCP-envelope wrap of native AdCP JSON-RPC** (gates AAO Verified for bragent):
+- Bragent currently serves raw AdCP JSON-RPC on `/mcp`. AAO comply runner (and any MCP buyer agent SDK) requires the MCP protocol: `initialize` handshake exchanging protocol version + capabilities, `tools/list` enumerating the 5 SI methods as MCP tools, `tools/call` dispatching `name + arguments` back to the existing `internal/si/handlers.go` adapters. The wrap is additive (current native JSON-RPC clients keep working) and lives in `internal/mcp/router.go`. Once landed, re-run `evaluate_agent_quality` to confirm SI compliance track surface — it's experimental in 3.1.x so we're partly mapping to a moving target, but `Status: failing (Agent unreachable)` should flip to whatever AAO reports for an actually-probable SI agent.
 
 Parked (spec dependency / external WG):
 - **A2A Agent Card** at `/.well-known/agent.json` — wait until the A2A working group settles SI/agent-card overlap.
